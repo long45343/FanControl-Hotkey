@@ -6,6 +6,7 @@
 *.ilk
 *.exp
 *.lib
+resource.o
 
 # 配置文件（运行时由程序生成，与可执行文件同主名）
 *.ini
@@ -13,3 +14,8 @@
 # AI Agent 项目规则文件（本地使用，不入库）
 AGENTS.md
 Agents.md
+
+# 图标生成脚本与预览图（仅保留 icon.ico）
+gen_icon.py
+icon_preview.png
+*.png
