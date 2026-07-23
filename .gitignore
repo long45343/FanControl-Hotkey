@@ -1,0 +1,15 @@
+# 编译产物
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# 配置文件（运行时由程序生成，与可执行文件同主名）
+*.ini
+
+# AI Agent 项目规则文件（本地使用，不入库）
+AGENTS.md
+Agents.md

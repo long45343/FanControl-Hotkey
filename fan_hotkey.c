@@ -719,7 +719,9 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 static int FindExistingWindow(void) {
     HWND h = FindWindowW(L"fcgui", NULL);
     if (h) {
-        if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+        /* 主窗口在 WM_CLOSE 中被 SW_HIDE 隐藏，IsIconic 不会返回 TRUE，
+           因此需要显式 SW_SHOW 才能把窗口从隐藏状态恢复显示。 */
+        ShowWindow(h, IsIconic(h) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(h);
         return 1;
     }
