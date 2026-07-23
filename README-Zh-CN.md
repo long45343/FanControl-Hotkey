@@ -1,4 +1,4 @@
-﻿# FanControl Hotkey
+# FanControl Hotkey
 
 一个轻量级的 [FanControl](https://getfancontrol.com/) 风扇模式热键切换工具。纯 Win32 API 实现，零运行时依赖。
 
@@ -32,14 +32,22 @@ FanControl 检测到已有实例运行后，会热切换配置而无需重启。
 ### 编译命令
 
 ```bash
-gcc -mwindows -municode -Os -s -o fan_hotkey.exe fan_hotkey.c -lcomdlg32
+windres resource.rc -O coff -o resource.o
+gcc -mwindows -municode -Os -s -D_UNICODE -DUNICODE -o FanControlHotkey.exe fan_hotkey.c resource.o -luser32 -lshell32 -lcomdlg32 -ladvapi32 -lgdi32
 ```
 
+- `windres resource.rc -O coff -o resource.o`：将图标资源编译为对象文件
 - `-mwindows`：GUI 子系统，无控制台窗口
 - `-municode`：使用 `wWinMain` 入口点，支持 Unicode
 - `-Os`：体积优先优化
 - `-s`：去除符号表
-- `-lcomdlg32`：链接通用对话框库（文件选择对话框）
+- `-D_UNICODE -DUNICODE`：启用 Win32 API 的 Unicode 宏
+- 链接库说明：
+  - `-luser32`：窗口消息、热键、托盘图标
+  - `-lshell32`：执行外部程序、托盘通知
+  - `-lcomdlg32`：通用文件对话框
+  - `-ladvapi32`：注册表读写（开机自启）
+  - `-lgdi32`：字体与 GDI 资源
 
 ### 编译参数说明
 
@@ -49,11 +57,12 @@ gcc -mwindows -municode -Os -s -o fan_hotkey.exe fan_hotkey.c -lcomdlg32
 | `-municode` | Unicode `wWinMain` 入口 |
 | `-Os` | 体积优化 |
 | `-s` | 去除符号表 |
+| `-D_UNICODE -DUNICODE` | 启用 Unicode 宏 |
 
 ## 使用方法
 
 1. 在 FanControl 界面中配置四套风扇策略，分别导出为 JSON 文件。
-2. 运行 `fan_hotkey.exe`。
+2. 运行 `FanControlHotkey.exe`。
 3. 点击 **设置** 按钮配置每个模式：
    - 勾选 **启用** 需要使用的模式
    - 点击 **选择路径...** 选择对应的 JSON 配置文件

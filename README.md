@@ -1,4 +1,4 @@
-﻿# FanControl Hotkey
+# FanControl Hotkey
 
 [中文文档](README-Zh-CN.md)
 
@@ -34,19 +34,27 @@ FanControl detects the running instance and hot-swaps the configuration without 
 ### Compile
 
 ```bash
-gcc -mwindows -municode -Os -s -o fan_hotkey.exe fan_hotkey.c -lcomdlg32
+windres resource.rc -O coff -o resource.o
+gcc -mwindows -municode -Os -s -D_UNICODE -DUNICODE -o FanControlHotkey.exe fan_hotkey.c resource.o -luser32 -lshell32 -lcomdlg32 -ladvapi32 -lgdi32
 ```
 
+- `windres resource.rc -O coff -o resource.o`: Compile the icon resource into an object file
 - `-mwindows`: GUI subsystem, no console window
 - `-municode`: Use `wWinMain` entry point for Unicode support
 - `-Os`: Optimize for size
 - `-s`: Strip symbol table
-- `-lcomdlg32`: Link common dialog (file open dialog)
+- `-D_UNICODE -DUNICODE`: Enable Unicode macros for Win32 API
+- Linked libraries:
+  - `-luser32`: Window messages, hotkeys, tray icon
+  - `-lshell32`: Shell execute, tray notifications
+  - `-lcomdlg32`: File open dialog
+  - `-ladvapi32`: Registry access (autostart)
+  - `-lgdi32`: Fonts and GDI resources
 
 ## Usage
 
 1. In FanControl UI, configure 4 fan profiles and export them as JSON files.
-2. Run `fan_hotkey.exe`.
+2. Run `FanControlHotkey.exe`.
 3. Click **Settings** to configure each mode:
    - Check **Enable** for modes you want to use
    - Browse and select the corresponding JSON config file
