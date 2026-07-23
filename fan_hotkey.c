@@ -147,7 +147,7 @@ static int g_trayAdded = 0;
 
 static HWND g_hwnd;
 static HFONT g_font;
-static char g_iniPath[MAX_PATH];
+static wchar_t g_iniPath[MAX_PATH];
 static HWND g_btnMain[MAX_MODES];
 static HWND g_swHwnd;
 static HWND g_swChk[MAX_MODES];
@@ -166,41 +166,51 @@ static BOOL CALLBACK SetChildFontProc(HWND h, LPARAM l) {
 /* ---------- INI ---------- */
 
 static void GetIniPath(void) {
-    GetModuleFileNameA(NULL, g_iniPath, MAX_PATH);
-    char *dot = strrchr(g_iniPath, '.');
-    if (dot) strcpy(dot, ".ini");
-    else strcat(g_iniPath, ".ini");
+    GetModuleFileNameW(NULL, g_iniPath, MAX_PATH);
+    wchar_t *dot = wcsrchr(g_iniPath, L'.');
+    if (dot) wcscpy(dot, L".ini");
+    else wcscat(g_iniPath, L".ini");
 }
 
 static void LoadConfig(void) {
     GetIniPath();
     for (int i = 0; i < MAX_MODES; i++) {
-        char sec[16];
-        sprintf(sec, "Mode%d", i);
-        g_modes[i].enabled = GetPrivateProfileIntA(sec, "Enabled", 1, g_iniPath);
-        GetPrivateProfileStringA(sec, "Config", "",
-            g_modes[i].config, MAX_PATH_LEN, g_iniPath);
-        GetPrivateProfileStringA(sec, "Hotkey", g_modes[i].hotkey,
-            g_modes[i].hotkey, MAX_HOTKEY_LEN, g_iniPath);
+        wchar_t sec[16];
+        _snwprintf(sec, 16, L"Mode%d", i);
+        g_modes[i].enabled = GetPrivateProfileIntW(sec, L"Enabled", 1, g_iniPath);
+        wchar_t wcfg[MAX_PATH];
+        GetPrivateProfileStringW(sec, L"Config", L"",
+            wcfg, MAX_PATH, g_iniPath);
+        WideCharToMultiByte(CP_UTF8, 0, wcfg, -1,
+            g_modes[i].config, MAX_PATH_LEN, NULL, NULL);
+        wchar_t whk[MAX_HOTKEY_LEN];
+        GetPrivateProfileStringW(sec, L"Hotkey", L"",
+            whk, MAX_HOTKEY_LEN, g_iniPath);
+        WideCharToMultiByte(CP_UTF8, 0, whk, -1,
+            g_modes[i].hotkey, MAX_HOTKEY_LEN, NULL, NULL);
     }
-    g_autostart = GetPrivateProfileIntA("General", "AutoStart", 0, g_iniPath);
-    g_showTray = GetPrivateProfileIntA("General", "ShowTray", 1, g_iniPath);
+    g_autostart = GetPrivateProfileIntW(L"General", L"AutoStart", 0, g_iniPath);
+    g_showTray = GetPrivateProfileIntW(L"General", L"ShowTray", 1, g_iniPath);
 }
 
 static void SaveConfig(void) {
     for (int i = 0; i < MAX_MODES; i++) {
-        char sec[16], buf[16];
-        sprintf(sec, "Mode%d", i);
-        sprintf(buf, "%d", g_modes[i].enabled);
-        WritePrivateProfileStringA(sec, "Enabled", buf, g_iniPath);
-        WritePrivateProfileStringA(sec, "Config", g_modes[i].config, g_iniPath);
-        WritePrivateProfileStringA(sec, "Hotkey", g_modes[i].hotkey, g_iniPath);
+        wchar_t sec[16], buf[16];
+        _snwprintf(sec, 16, L"Mode%d", i);
+        _snwprintf(buf, 16, L"%d", g_modes[i].enabled);
+        WritePrivateProfileStringW(sec, L"Enabled", buf, g_iniPath);
+        wchar_t wcfg[MAX_PATH];
+        MultiByteToWideChar(CP_UTF8, 0, g_modes[i].config, -1, wcfg, MAX_PATH);
+        WritePrivateProfileStringW(sec, L"Config", wcfg, g_iniPath);
+        wchar_t whk[MAX_HOTKEY_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, whk, MAX_HOTKEY_LEN);
+        WritePrivateProfileStringW(sec, L"Hotkey", whk, g_iniPath);
     }
-    char buf[16];
-    sprintf(buf, "%d", g_autostart);
-    WritePrivateProfileStringA("General", "AutoStart", buf, g_iniPath);
-    sprintf(buf, "%d", g_showTray);
-    WritePrivateProfileStringA("General", "ShowTray", buf, g_iniPath);
+    wchar_t buf[16];
+    _snwprintf(buf, 16, L"%d", g_autostart);
+    WritePrivateProfileStringW(L"General", L"AutoStart", buf, g_iniPath);
+    _snwprintf(buf, 16, L"%d", g_showTray);
+    WritePrivateProfileStringW(L"General", L"ShowTray", buf, g_iniPath);
 }
 
 /* ---------- Auto Start (Registry) ---------- */
@@ -503,9 +513,7 @@ static void OpenBrowseDialog(int idx) {
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (GetOpenFileNameW(&ofn)) {
-        char cfg[MAX_PATH];
-        WideCharToMultiByte(CP_UTF8, 0, file, -1, cfg, MAX_PATH, NULL, NULL);
-        SetWindowTextA(g_swEdtCfg[idx], cfg);
+        SetWindowTextW(g_swEdtCfg[idx], file);
     }
 }
 
@@ -608,10 +616,14 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 for (int i = 0; i < MAX_MODES; i++) {
                     g_modes[i].enabled = (SendMessage(
                         g_swChk[i], BM_GETCHECK, 0, 0) == BST_CHECKED);
-                    GetWindowTextA(g_swEdtCfg[i],
-                        g_modes[i].config, MAX_PATH_LEN);
-                    GetWindowTextA(g_swEdtHk[i],
-                        g_modes[i].hotkey, MAX_HOTKEY_LEN);
+                    wchar_t wcfg[MAX_PATH];
+                    GetWindowTextW(g_swEdtCfg[i], wcfg, MAX_PATH);
+                    WideCharToMultiByte(CP_UTF8, 0, wcfg, -1,
+                        g_modes[i].config, MAX_PATH_LEN, NULL, NULL);
+                    wchar_t whk[MAX_HOTKEY_LEN];
+                    GetWindowTextW(g_swEdtHk[i], whk, MAX_HOTKEY_LEN);
+                    WideCharToMultiByte(CP_UTF8, 0, whk, -1,
+                        g_modes[i].hotkey, MAX_HOTKEY_LEN, NULL, NULL);
                 }
                 g_autostart = (SendMessage(
                     g_swChkStartup, BM_GETCHECK, 0, 0) == BST_CHECKED);
