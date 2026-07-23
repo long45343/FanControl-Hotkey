@@ -1,5 +1,7 @@
 ﻿# FanControl Hotkey
 
+[中文文档](README-Zh-CN.md)
+
 A lightweight hotkey-based fan profile switcher for [FanControl](https://getfancontrol.com/). Built with pure Win32 API, zero runtime dependencies.
 
 ## Features
