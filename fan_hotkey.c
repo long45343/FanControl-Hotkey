@@ -6,6 +6,8 @@
 #include <ctype.h>
 #include <wchar.h>
 
+#include "resource.h"
+
 #define MAX_MODES 4
 #define MAX_PATH_LEN 260
 #define MAX_HOTKEY_LEN 32
@@ -301,7 +303,7 @@ static void AddTrayIcon(void) {
     nid.uID = 1;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    nid.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+    nid.hIcon = LoadIconW((HINSTANCE)GetWindowLongPtrW(g_hwnd, GWLP_HINSTANCE), MAKEINTRESOURCEW(IDI_MAIN));
     wcscpy(nid.szTip, g_str->app_title);
     Shell_NotifyIconW(NIM_ADD, &nid);
     g_trayAdded = 1;
@@ -751,6 +753,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     WNDCLASSW wcMain = {0};
     wcMain.lpfnWndProc = MainWndProc;
     wcMain.hInstance = hi;
+    wcMain.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(IDI_MAIN));
     wcMain.hCursor = LoadCursor(NULL, IDC_ARROW);
     wcMain.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wcMain.lpszClassName = L"fcgui";
@@ -759,6 +762,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     WNDCLASSW wcSet = {0};
     wcSet.lpfnWndProc = SettingsWndProc;
     wcSet.hInstance = hi;
+    wcSet.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(IDI_MAIN));
     wcSet.hCursor = LoadCursor(NULL, IDC_ARROW);
     wcSet.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wcSet.lpszClassName = L"fcsettings";
@@ -767,6 +771,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     WNDCLASSW wcCap = {0};
     wcCap.lpfnWndProc = CaptureProc;
     wcCap.hInstance = hi;
+    wcCap.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(IDI_MAIN));
     wcCap.hCursor = LoadCursor(NULL, IDC_ARROW);
     wcCap.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wcCap.lpszClassName = L"fccapture";
