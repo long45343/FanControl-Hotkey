@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <commdlg.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -11,11 +12,18 @@
 #define MAX_MODES 4
 #define MAX_PATH_LEN 260
 #define MAX_HOTKEY_LEN 32
+#define MAX_PROCESS_NAMES 16
+#define MAX_PROCESS_LEN   64
+#define MAX_PROCESS_LIST_LEN (MAX_PROCESS_NAMES * (MAX_PROCESS_LEN + 2))
+#define DEFAULT_MODE_INDEX 1
+#define POLL_INTERVAL_MS  2000
+#define TIMER_POLL_ID     1
 
 #define FANCONTROL_EXE L"C:\\Program Files (x86)\\FanControl\\FanControl.exe"
 #define MUTEX_NAME L"FanControl_Hotkey_Mutex_3F7A2E"
 #define APP_REG_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_REG_VAL L"FanControlHotkey"
+#define AUTORUN_FLAG L"--autostart"
 
 #define IDC_BTN_BASE    1
 #define IDC_SETTINGS    100
@@ -25,7 +33,13 @@
 #define IDC_CANCEL      2001
 #define IDC_CHK_STARTUP 3000
 #define IDC_CHK_TRAY    3001
+#define IDC_CHK_AUTOSWITCH 3002
 #define IDC_CAPTURE_BASE 1300
+#define IDC_PROC_LIST_BASE 1400
+#define IDC_PROC_EDT_BASE  1500
+#define IDC_PROC_ADD_BASE  1600
+#define IDC_PROC_DEL_BASE  1700
+#define IDC_PROC_BRW_BASE  1800
 
 #define WM_TRAYICON       (WM_APP + 1)
 #define WM_REFRESH_BROWSE (WM_APP + 2)
@@ -41,12 +55,16 @@ typedef struct {
     const wchar_t *general;
     const wchar_t *autostart;
     const wchar_t *show_tray;
+    const wchar_t *auto_switch;
     const wchar_t *mode_config;
+    const wchar_t *process_config;
     const wchar_t *enable_fmt;
     const wchar_t *config_file;
     const wchar_t *browse;
     const wchar_t *hotkey;
     const wchar_t *capture_btn;
+    const wchar_t *add;
+    const wchar_t *del;
     const wchar_t *ok;
     const wchar_t *cancel;
     const wchar_t *tray_show;
@@ -55,6 +73,7 @@ typedef struct {
     const wchar_t *capture_title;
     const wchar_t *json_filter;
     const wchar_t *all_filter;
+    const wchar_t *exe_filter;
     const wchar_t *hotkey_conflict_msg;
     const wchar_t *hotkey_conflict_title;
     const wchar_t *not_enabled_msg;
@@ -71,12 +90,16 @@ static const Strings str_zh = {
     L"通用选项",
     L"开机自动启动",
     L"显示系统托盘图标",
+    L"启用进程感知自动切换",
     L"模式配置",
+    L"进程配置",
     L"启用 %s",
     L"配置文件：",
     L"选择路径...",
     L"快捷键：",
     L"直接输入",
+    L"添加",
+    L"删除",
     L"确定",
     L"取消",
     L"显示",
@@ -85,6 +108,7 @@ static const Strings str_zh = {
     L"捕获快捷键",
     L"JSON 文件 (*.json)",
     L"所有文件 (*.*)",
+    L"可执行文件 (*.exe)",
     L"该快捷键已被其他模式使用，请选择其他组合。",
     L"快捷键冲突",
     L"该模式未启用，请在设置中勾选启用。",
@@ -101,12 +125,16 @@ static const Strings str_en = {
     L"General",
     L"Start with Windows",
     L"Show tray icon",
+    L"Enable process-aware auto switch",
     L"Mode Configuration",
+    L"Process Configuration",
     L"Enable %s",
     L"Config file:",
     L"Browse...",
     L"Hotkey:",
     L"Capture",
+    L"Add",
+    L"Delete",
     L"OK",
     L"Cancel",
     L"Show",
@@ -115,6 +143,7 @@ static const Strings str_en = {
     L"Capture Hotkey",
     L"JSON Files (*.json)",
     L"All Files (*.*)",
+    L"Executable Files (*.exe)",
     L"This hotkey is already used by another mode. Please choose a different combination.",
     L"Hotkey Conflict",
     L"This mode is not enabled. Enable it in Settings.",
@@ -130,20 +159,24 @@ typedef struct {
     wchar_t name[32];
     char    config[MAX_PATH_LEN];
     char    hotkey[MAX_HOTKEY_LEN];
+    char    processNames[MAX_PROCESS_NAMES][MAX_PROCESS_LEN];
+    int     processCount;
     int enabled;
     int hotkeyId;
 } Mode;
 
 static Mode g_modes[MAX_MODES] = {
-    {L"", "", "Ctrl+Alt+1", 1, 0},
-    {L"", "", "Ctrl+Alt+2", 1, 0},
-    {L"", "", "Ctrl+Alt+3", 1, 0},
-    {L"", "", "Ctrl+Alt+4", 1, 0},
+    {L"", "", "Ctrl+Alt+1", {{0}}, 0, 1, 0},
+    {L"", "", "Ctrl+Alt+2", {{0}}, 0, 1, 0},
+    {L"", "", "Ctrl+Alt+3", {{0}}, 0, 1, 0},
+    {L"", "", "Ctrl+Alt+4", {{0}}, 0, 1, 0},
 };
 
 static int g_autostart = 0;
 static int g_showTray = 1;
+static int g_autoSwitch = 1;
 static int g_trayAdded = 0;
+static int g_lastAutoMode = -1;
 
 static HWND g_hwnd;
 static HFONT g_font;
@@ -157,6 +190,12 @@ static HWND g_swEdtHk[MAX_MODES];
 static HWND g_swBtnCap[MAX_MODES];
 static HWND g_swChkStartup;
 static HWND g_swChkTray;
+static HWND g_swChkAutoSwitch;
+static HWND g_swProcList[MAX_MODES];
+static HWND g_swProcEdt[MAX_MODES];
+static HWND g_swProcAdd[MAX_MODES];
+static HWND g_swProcDel[MAX_MODES];
+static HWND g_swProcBrw[MAX_MODES];
 
 static BOOL CALLBACK SetChildFontProc(HWND h, LPARAM l) {
     SendMessage(h, WM_SETFONT, l, TRUE);
@@ -170,6 +209,45 @@ static void GetIniPath(void) {
     wchar_t *dot = wcsrchr(g_iniPath, L'.');
     if (dot) wcscpy(dot, L".ini");
     else wcscat(g_iniPath, L".ini");
+}
+
+static void ParseProcessList(int idx, const wchar_t *text) {
+    g_modes[idx].processCount = 0;
+    if (!text || !text[0]) return;
+    wchar_t buf[MAX_PROCESS_LIST_LEN];
+    wcsncpy(buf, text, MAX_PROCESS_LIST_LEN - 1);
+    buf[MAX_PROCESS_LIST_LEN - 1] = 0;
+    wchar_t *ctx = NULL;
+    wchar_t *tok = wcstok_s(buf, L",", &ctx);
+    while (tok && g_modes[idx].processCount < MAX_PROCESS_NAMES) {
+        while (*tok == L' ' || *tok == L'\t') tok++;
+        int len = (int)wcslen(tok);
+        while (len > 0 && (tok[len - 1] == L' ' || tok[len - 1] == L'\t'))
+            tok[--len] = 0;
+        if (len > 0) {
+            WideCharToMultiByte(CP_UTF8, 0, tok, -1,
+                g_modes[idx].processNames[g_modes[idx].processCount],
+                MAX_PROCESS_LEN, NULL, NULL);
+            g_modes[idx].processCount++;
+        }
+        tok = wcstok_s(NULL, L",", &ctx);
+    }
+}
+
+static void BuildProcessList(int idx, wchar_t *out, int outLen) {
+    out[0] = 0;
+    int pos = 0;
+    for (int i = 0; i < g_modes[idx].processCount; i++) {
+        wchar_t wname[MAX_PROCESS_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].processNames[i], -1,
+            wname, MAX_PROCESS_LEN);
+        int len = (int)wcslen(wname);
+        if (pos + len + 2 >= outLen) break;
+        if (i > 0) out[pos++] = L',';
+        wcscpy(out + pos, wname);
+        pos += len;
+    }
+    out[pos] = 0;
 }
 
 static void LoadConfig(void) {
@@ -188,9 +266,14 @@ static void LoadConfig(void) {
             whk, MAX_HOTKEY_LEN, g_iniPath);
         WideCharToMultiByte(CP_UTF8, 0, whk, -1,
             g_modes[i].hotkey, MAX_HOTKEY_LEN, NULL, NULL);
+        wchar_t wprocs[MAX_PROCESS_LIST_LEN];
+        GetPrivateProfileStringW(sec, L"Processes", L"",
+            wprocs, MAX_PROCESS_LIST_LEN, g_iniPath);
+        ParseProcessList(i, wprocs);
     }
     g_autostart = GetPrivateProfileIntW(L"General", L"AutoStart", 0, g_iniPath);
     g_showTray = GetPrivateProfileIntW(L"General", L"ShowTray", 1, g_iniPath);
+    g_autoSwitch = GetPrivateProfileIntW(L"General", L"AutoSwitch", 1, g_iniPath);
 }
 
 static void SaveConfig(void) {
@@ -205,12 +288,17 @@ static void SaveConfig(void) {
         wchar_t whk[MAX_HOTKEY_LEN];
         MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, whk, MAX_HOTKEY_LEN);
         WritePrivateProfileStringW(sec, L"Hotkey", whk, g_iniPath);
+        wchar_t wprocs[MAX_PROCESS_LIST_LEN];
+        BuildProcessList(i, wprocs, MAX_PROCESS_LIST_LEN);
+        WritePrivateProfileStringW(sec, L"Processes", wprocs, g_iniPath);
     }
     wchar_t buf[16];
     _snwprintf(buf, 16, L"%d", g_autostart);
     WritePrivateProfileStringW(L"General", L"AutoStart", buf, g_iniPath);
     _snwprintf(buf, 16, L"%d", g_showTray);
     WritePrivateProfileStringW(L"General", L"ShowTray", buf, g_iniPath);
+    _snwprintf(buf, 16, L"%d", g_autoSwitch);
+    WritePrivateProfileStringW(L"General", L"AutoSwitch", buf, g_iniPath);
 }
 
 /* ---------- Auto Start (Registry) ---------- */
@@ -237,8 +325,11 @@ static void SetAutostart(int on) {
         != ERROR_SUCCESS)
         return;
     if (on) {
-        wchar_t path[MAX_PATH];
+        wchar_t path[MAX_PATH * 2];
         GetModuleFileNameW(NULL, path, MAX_PATH);
+        /* 附带 --autostart 参数以便运行时区分开机启动 */
+        _snwprintf(path + wcslen(path), MAX_PATH * 2 - (int)wcslen(path),
+            L" %s", AUTORUN_FLAG);
         RegSetValueExW(hKey, APP_REG_VAL, 0, REG_SZ,
             (const BYTE *)path, (lstrlenW(path) + 1) * sizeof(wchar_t));
     } else {
@@ -334,18 +425,40 @@ static void ApplyTraySetting(void) {
     else RemoveTrayIcon();
 }
 
-static void SwitchTo(int idx) {
+static int IsProcessRunning(const wchar_t *name) {
+    if (!name || !name[0]) return 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe = {0};
+    pe.dwSize = sizeof(pe);
+    int found = 0;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, name) == 0) {
+                found = 1;
+                break;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return found;
+}
+
+static void SwitchTo(int idx, int silent) {
     if (idx < 0 || idx >= MAX_MODES) return;
     if (!g_modes[idx].enabled) {
-        MessageBoxW(g_hwnd, g_str->not_enabled_msg,
-            g_str->notice, MB_OK | MB_ICONINFORMATION);
+        if (!silent)
+            MessageBoxW(g_hwnd, g_str->not_enabled_msg,
+                g_str->notice, MB_OK | MB_ICONINFORMATION);
         return;
     }
     if (!g_modes[idx].config[0]) {
-        wchar_t msg[128];
-        _snwprintf(msg, 128, g_str->not_configured_fmt,
-            g_modes[idx].name);
-        MessageBoxW(g_hwnd, msg, g_str->notice, MB_OK | MB_ICONINFORMATION);
+        if (!silent) {
+            wchar_t msg[128];
+            _snwprintf(msg, 128, g_str->not_configured_fmt,
+                g_modes[idx].name);
+            MessageBoxW(g_hwnd, msg, g_str->notice, MB_OK | MB_ICONINFORMATION);
+        }
         return;
     }
     wchar_t args[MAX_PATH * 2];
@@ -353,6 +466,29 @@ static void SwitchTo(int idx) {
     MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].config, -1, wcfg, MAX_PATH);
     _snwprintf(args, sizeof(args)/sizeof(args[0]), L"-c \"%s\"", wcfg);
     ShellExecuteW(NULL, L"open", FANCONTROL_EXE, args, NULL, SW_HIDE);
+}
+
+static void CheckProcessTriggers(void) {
+    if (!g_autoSwitch) return;
+    int target = -1;
+    for (int i = MAX_MODES - 1; i >= 0; i--) {
+        if (!g_modes[i].enabled || g_modes[i].processCount <= 0) continue;
+        for (int j = 0; j < g_modes[i].processCount; j++) {
+            wchar_t wname[MAX_PROCESS_LEN];
+            MultiByteToWideChar(CP_UTF8, 0, g_modes[i].processNames[j], -1,
+                wname, MAX_PROCESS_LEN);
+            if (IsProcessRunning(wname)) {
+                target = i;
+                i = -1;
+                break;
+            }
+        }
+    }
+    if (target < 0) target = DEFAULT_MODE_INDEX;
+    if (target != g_lastAutoMode) {
+        SwitchTo(target, 1);
+        g_lastAutoMode = target;
+    }
 }
 
 static void RefreshMainButtons(void) {
@@ -517,6 +653,102 @@ static void OpenBrowseDialog(int idx) {
     }
 }
 
+static void RefreshProcessList(int idx) {
+    if (!g_swProcList[idx]) return;
+    SendMessage(g_swProcList[idx], LB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < g_modes[idx].processCount; i++) {
+        wchar_t wname[MAX_PROCESS_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].processNames[i], -1,
+            wname, MAX_PROCESS_LEN);
+        SendMessage(g_swProcList[idx], LB_ADDSTRING, 0, (LPARAM)wname);
+    }
+}
+
+static void UpdateProcessControlsState(void) {
+    BOOL master = (SendMessage(g_swChkAutoSwitch, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    for (int i = 0; i < MAX_MODES; i++) {
+        EnableWindow(g_swProcList[i], master);
+        EnableWindow(g_swProcEdt[i], master);
+        EnableWindow(g_swProcAdd[i], master);
+        EnableWindow(g_swProcDel[i], master);
+        EnableWindow(g_swProcBrw[i], master);
+    }
+}
+
+static int IsProcessNameDuplicate(int idx, const wchar_t *name);
+static void OpenExeBrowseDialog(int idx) {
+    wchar_t file[MAX_PATH] = L"";
+    wchar_t filter[256];
+    wchar_t *p = filter;
+    wcscpy(p, g_str->exe_filter); p += wcslen(p) + 1;
+    wcscpy(p, L"*.exe");          p += wcslen(p) + 1;
+    wcscpy(p, g_str->all_filter); p += wcslen(p) + 1;
+    wcscpy(p, L"*.*");            p += wcslen(p) + 1;
+    *p = 0;
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_swHwnd;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (GetOpenFileNameW(&ofn)) {
+        wchar_t *name = wcsrchr(file, L'\\');
+        if (!name) name = wcsrchr(file, L'/');
+        if (name) name++;
+        else name = file;
+        if (!IsProcessNameDuplicate(idx, name)
+            && g_modes[idx].processCount < MAX_PROCESS_NAMES) {
+            WideCharToMultiByte(CP_UTF8, 0, name, -1,
+                g_modes[idx].processNames[g_modes[idx].processCount],
+                MAX_PROCESS_LEN, NULL, NULL);
+            g_modes[idx].processCount++;
+            RefreshProcessList(idx);
+        }
+    }
+}
+
+static int IsProcessNameDuplicate(int idx, const wchar_t *name) {
+    char name_a[MAX_PROCESS_LEN];
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, name_a, MAX_PROCESS_LEN, NULL, NULL);
+    for (int i = 0; i < g_modes[idx].processCount; i++) {
+        if (_stricmp(g_modes[idx].processNames[i], name_a) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void AddProcessFromEdit(int idx) {
+    if (g_modes[idx].processCount >= MAX_PROCESS_NAMES) return;
+    wchar_t name[MAX_PROCESS_LEN];
+    GetWindowTextW(g_swProcEdt[idx], name, MAX_PROCESS_LEN);
+    int len = (int)wcslen(name);
+    while (len > 0 && (name[len - 1] == L' ' || name[len - 1] == L'\t'))
+        name[--len] = 0;
+    int pos = 0;
+    while (name[pos] == L' ' || name[pos] == L'\t') pos++;
+    if (len <= pos) return;
+    wchar_t *clean = name + pos;
+    if (IsProcessNameDuplicate(idx, clean)) return;
+    WideCharToMultiByte(CP_UTF8, 0, clean, -1,
+        g_modes[idx].processNames[g_modes[idx].processCount],
+        MAX_PROCESS_LEN, NULL, NULL);
+    g_modes[idx].processCount++;
+    RefreshProcessList(idx);
+    SetWindowTextW(g_swProcEdt[idx], L"");
+}
+
+static void DeleteSelectedProcess(int idx) {
+    if (!g_swProcList[idx]) return;
+    int sel = (int)SendMessage(g_swProcList[idx], LB_GETCURSEL, 0, 0);
+    if (sel < 0 || sel >= g_modes[idx].processCount) return;
+    for (int i = sel; i < g_modes[idx].processCount - 1; i++)
+        memcpy(g_modes[idx].processNames[i], g_modes[idx].processNames[i + 1],
+            MAX_PROCESS_LEN);
+    g_modes[idx].processCount--;
+    RefreshProcessList(idx);
+}
+
 static void UpdateBrowseState(void) {
     for (int i = 0; i < MAX_MODES; i++) {
         BOOL on = (SendMessage(g_swChk[i], BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -533,7 +765,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         CREATESTRUCTW *cs = (CREATESTRUCTW *)l;
         int y = 12;
 
-        /* 通用选项区 */
+        /* 通用选项区（左栏顶部） */
         CreateWindowW(L"STATIC", g_str->general,
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             12, y, 200, 22, h, NULL, cs->hInstance, NULL);
@@ -551,9 +783,16 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             (HMENU)IDC_CHK_TRAY, cs->hInstance, NULL);
         SendMessage(g_swChkTray, BM_SETCHECK,
             g_showTray ? BST_CHECKED : BST_UNCHECKED, 0);
+        y += 30;
+        g_swChkAutoSwitch = CreateWindowW(L"BUTTON", g_str->auto_switch,
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            22, y, 260, 26, h,
+            (HMENU)IDC_CHK_AUTOSWITCH, cs->hInstance, NULL);
+        SendMessage(g_swChkAutoSwitch, BM_SETCHECK,
+            g_autoSwitch ? BST_CHECKED : BST_UNCHECKED, 0);
         y += 38;
 
-        /* 分隔线 */
+        /* 左栏：模式配置 */
         CreateWindowW(L"STATIC", g_str->mode_config,
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             12, y, 200, 22, h, NULL, cs->hInstance, NULL);
@@ -574,36 +813,80 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 22, y + 3, 80, 22, h, NULL, cs->hInstance, NULL);
             g_swEdtCfg[i] = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
                 L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                108, y, 285, 28, h, NULL, cs->hInstance, NULL);
+                108, y, 270, 26, h, NULL, cs->hInstance, NULL);
             wchar_t cfgw[MAX_PATH];
             MultiByteToWideChar(CP_UTF8, 0, g_modes[i].config, -1, cfgw, MAX_PATH);
             SetWindowTextW(g_swEdtCfg[i], cfgw);
             g_swBtnBrw[i] = CreateWindowW(L"BUTTON", g_str->browse,
-                WS_CHILD | WS_VISIBLE, 400, y, 80, 28, h,
+                WS_CHILD | WS_VISIBLE, 385, y, 95, 28, h,
                 (HMENU)(INT_PTR)(IDC_BROWSE_BASE + i), cs->hInstance, NULL);
 
-            y += 34;
+            y += 32;
             CreateWindowW(L"STATIC", g_str->hotkey, WS_CHILD | WS_VISIBLE,
                 22, y + 3, 80, 22, h, NULL, cs->hInstance, NULL);
             g_swEdtHk[i] = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
                 L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                108, y, 120, 28, h, NULL, cs->hInstance, NULL);
+                108, y, 120, 26, h, NULL, cs->hInstance, NULL);
             wchar_t hkw[MAX_HOTKEY_LEN];
             MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, hkw, MAX_HOTKEY_LEN);
             SetWindowTextW(g_swEdtHk[i], hkw);
             g_swBtnCap[i] = CreateWindowW(L"BUTTON", g_str->capture_btn,
-                WS_CHILD | WS_VISIBLE, 235, y, 80, 28, h,
+                WS_CHILD | WS_VISIBLE, 235, y, 75, 26, h,
                 (HMENU)(INT_PTR)(IDC_CAPTURE_BASE + i), cs->hInstance, NULL);
 
-            y += 42;
+            y += 40;
         }
         CreateWindowW(L"BUTTON", g_str->ok, WS_CHILD | WS_VISIBLE,
-            275, y, 95, 32, h, (HMENU)IDC_OK, cs->hInstance, NULL);
+            120, y, 95, 32, h, (HMENU)IDC_OK, cs->hInstance, NULL);
         CreateWindowW(L"BUTTON", g_str->cancel, WS_CHILD | WS_VISIBLE,
-            385, y, 95, 32, h, (HMENU)IDC_CANCEL, cs->hInstance, NULL);
+            230, y, 95, 32, h, (HMENU)IDC_CANCEL, cs->hInstance, NULL);
+
+        /* 右栏：进程配置 */
+        int ry = 12;
+        CreateWindowW(L"STATIC", g_str->process_config,
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            510, ry, 200, 22, h, NULL, cs->hInstance, NULL);
+        ry += 26;
+
+        for (int i = 0; i < MAX_MODES; i++) {
+            wchar_t title[64];
+            _snwprintf(title, 64, L"%s %s", g_modes[i].name, g_str->process_config);
+            CreateWindowW(L"STATIC", title,
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                510, ry, 310, 20, h, NULL, cs->hInstance, NULL);
+            ry += 22;
+
+            g_swProcList[i] = CreateWindowW(L"LISTBOX", L"",
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_STANDARD,
+                510, ry, 190, 70, h,
+                (HMENU)(INT_PTR)(IDC_PROC_LIST_BASE + i), cs->hInstance, NULL);
+            RefreshProcessList(i);
+
+            g_swProcAdd[i] = CreateWindowW(L"BUTTON", g_str->add,
+                WS_CHILD | WS_VISIBLE,
+                710, ry, 80, 26, h,
+                (HMENU)(INT_PTR)(IDC_PROC_ADD_BASE + i), cs->hInstance, NULL);
+            g_swProcDel[i] = CreateWindowW(L"BUTTON", g_str->del,
+                WS_CHILD | WS_VISIBLE,
+                710, ry + 30, 80, 26, h,
+                (HMENU)(INT_PTR)(IDC_PROC_DEL_BASE + i), cs->hInstance, NULL);
+
+            ry += 74;
+            g_swProcEdt[i] = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
+                L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                510, ry, 190, 24, h,
+                (HMENU)(INT_PTR)(IDC_PROC_EDT_BASE + i), cs->hInstance, NULL);
+            g_swProcBrw[i] = CreateWindowW(L"BUTTON", g_str->browse,
+                WS_CHILD | WS_VISIBLE,
+                710, ry, 80, 24, h,
+                (HMENU)(INT_PTR)(IDC_PROC_BRW_BASE + i), cs->hInstance, NULL);
+
+            ry += 32;
+        }
 
         EnumChildWindows(h, (WNDENUMPROC)SetChildFontProc, (LPARAM)g_font);
         PostMessage(h, WM_REFRESH_BROWSE, 0, 0);
+        UpdateProcessControlsState();
         return 0;
     }
     case WM_REFRESH_BROWSE:
@@ -629,17 +912,23 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                     g_swChkStartup, BM_GETCHECK, 0, 0) == BST_CHECKED);
                 g_showTray = (SendMessage(
                     g_swChkTray, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                g_autoSwitch = (SendMessage(
+                    g_swChkAutoSwitch, BM_GETCHECK, 0, 0) == BST_CHECKED);
                 SetAutostart(g_autostart);
                 SaveConfig();
+                g_lastAutoMode = -1;
                 RegisterAllHotkeys();
                 RefreshMainButtons();
                 ApplyTraySetting();
                 DestroyWindow(h);
                 g_swHwnd = NULL;
             } else if (id == IDC_CANCEL) {
+                LoadConfig();
                 DestroyWindow(h);
                 g_swHwnd = NULL;
                 RegisterAllHotkeys();
+            } else if (id == IDC_CHK_AUTOSWITCH) {
+                UpdateProcessControlsState();
             } else if (id >= IDC_CHK_BASE && id < IDC_CHK_BASE + MAX_MODES) {
                 UpdateBrowseState();
             } else {
@@ -650,6 +939,18 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                     }
                     if (id == IDC_CAPTURE_BASE + i) {
                         OpenCaptureWindow(i);
+                        break;
+                    }
+                    if (id == IDC_PROC_ADD_BASE + i) {
+                        AddProcessFromEdit(i);
+                        break;
+                    }
+                    if (id == IDC_PROC_DEL_BASE + i) {
+                        DeleteSelectedProcess(i);
+                        break;
+                    }
+                    if (id == IDC_PROC_BRW_BASE + i) {
+                        OpenExeBrowseDialog(i);
                         break;
                     }
                 }
@@ -673,7 +974,7 @@ static void OpenSettings(HINSTANCE hi) {
     UnregisterAllHotkeys();
     g_swHwnd = CreateWindowW(L"fcsettings", g_str->settings,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 500, 660, g_hwnd, NULL, hi, NULL);
+        CW_USEDEFAULT, CW_USEDEFAULT, 850, 700, g_hwnd, NULL, hi, NULL);
     ShowWindow(g_swHwnd, SW_SHOW);
     UpdateWindow(g_swHwnd);
 }
@@ -685,7 +986,7 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_HOTKEY:
         for (int i = 0; i < MAX_MODES; i++) {
             if (g_modes[i].hotkeyId == (int)w) {
-                SwitchTo(i);
+                SwitchTo(i, 0);
                 break;
             }
         }
@@ -703,7 +1004,7 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             else {
                 for (int i = 0; i < MAX_MODES; i++) {
                     if (id == IDC_BTN_BASE + i) {
-                        SwitchTo(i);
+                        SwitchTo(i, 0);
                         break;
                     }
                 }
@@ -720,7 +1021,12 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_CLOSE:
         ShowWindow(h, SW_HIDE);
         return 0;
+    case WM_TIMER:
+        if (w == TIMER_POLL_ID)
+            CheckProcessTriggers();
+        return 0;
     case WM_DESTROY:
+        KillTimer(h, TIMER_POLL_ID);
         RemoveTrayIcon();
         PostQuitMessage(0);
         return 0;
@@ -758,8 +1064,8 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     else
         g_str = &str_en;
 
-    /* 判断是否因开机启动而运行：来自注册表 Run 键时没有命令行参数 */
-    int startedByAutorun = (!cmd || cmd[0] == L'\0');
+    /* 判断是否开机启动：注册表 Run 键附带 --autostart 参数 */
+    int startedByAutorun = (cmd && wcsstr(cmd, AUTORUN_FLAG) != NULL);
 
     g_font = CreateFontW(20, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -819,6 +1125,8 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     RefreshMainButtons();
     ApplyTraySetting();
     RegisterAllHotkeys();
+    SetTimer(g_hwnd, TIMER_POLL_ID, POLL_INTERVAL_MS, NULL);
+    CheckProcessTriggers();
 
     if (startedByAutorun)
         show = SW_HIDE;
