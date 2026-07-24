@@ -758,6 +758,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     else
         g_str = &str_en;
 
+    /* 判断是否因开机启动而运行：来自注册表 Run 键时没有命令行参数 */
+    int startedByAutorun = (!cmd || cmd[0] == L'\0');
+
     g_font = CreateFontW(20, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei UI");
@@ -816,6 +819,12 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     RefreshMainButtons();
     ApplyTraySetting();
     RegisterAllHotkeys();
+
+    if (startedByAutorun)
+        show = SW_HIDE;
+    else if (show == SW_SHOWNORMAL || show == SW_SHOWDEFAULT)
+        show = SW_SHOW;
+
     ShowWindow(g_hwnd, show);
 
     MSG msg;
