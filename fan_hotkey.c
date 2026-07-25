@@ -10,7 +10,7 @@
 #include "resource.h"
 
 #define MAX_MODES 4
-#define MAX_PATH_LEN 260
+#define MAX_CONFIG_PATH 260
 #define MAX_HOTKEY_LEN 32
 #define MAX_PROCESS_NAMES 16
 #define MAX_PROCESS_LEN   64
@@ -19,30 +19,43 @@
 #define POLL_INTERVAL_MS  2000
 #define TIMER_POLL_ID     1
 
-#define FANCONTROL_EXE L"C:\\Program Files (x86)\\FanControl\\FanControl.exe"
+#define FANCONTROL_EXE_DEFAULT L"C:\\Program Files (x86)\\FanControl\\FanControl.exe"
 #define MUTEX_NAME L"FanControl_Hotkey_Mutex_3F7A2E"
 #define APP_REG_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_REG_VAL L"FanControlHotkey"
 #define AUTORUN_FLAG L"--autostart"
 
+/* 主窗口控件 ID（1-99） */
 #define IDC_BTN_BASE    1
 #define IDC_SETTINGS    100
-#define IDC_CHK_BASE   1000
-#define IDC_BROWSE_BASE 1100
-#define IDC_OK          2000
-#define IDC_CANCEL      2001
+#define IDC_EXIT        101
+
+/* 通用复选框 ID（3000-3099） */
 #define IDC_CHK_STARTUP 3000
 #define IDC_CHK_TRAY    3001
 #define IDC_CHK_AUTOSWITCH 3002
+
+/* 设置窗口：模式配置区（1000-1399） */
+#define IDC_CHK_BASE   1000
+#define IDC_BROWSE_BASE 1100
 #define IDC_CAPTURE_BASE 1300
+
+/* 设置窗口：进程名单区（1400-1899） */
 #define IDC_PROC_LIST_BASE 1400
 #define IDC_PROC_EDT_BASE  1500
 #define IDC_PROC_ADD_BASE  1600
 #define IDC_PROC_DEL_BASE  1700
 #define IDC_PROC_BRW_BASE  1800
 
+/* 设置窗口：按钮（2000-2099） */
+#define IDC_OK          2000
+#define IDC_CANCEL      2001
+
+/* 自定义窗口消息 */
 #define WM_TRAYICON       (WM_APP + 1)
 #define WM_REFRESH_BROWSE (WM_APP + 2)
+
+/* 托盘菜单命令（201-299） */
 #define IDM_TRAY_SHOW   201
 #define IDM_TRAY_EXIT   202
 
@@ -76,11 +89,14 @@ typedef struct {
     const wchar_t *exe_filter;
     const wchar_t *hotkey_conflict_msg;
     const wchar_t *hotkey_conflict_title;
+    const wchar_t *hotkey_register_failed_fmt;
     const wchar_t *not_enabled_msg;
     const wchar_t *not_configured_fmt;
+    const wchar_t *fancontrol_not_found_fmt;
     const wchar_t *notice;
     const wchar_t *disabled_suffix;
     const wchar_t *not_configured_suffix;
+    const wchar_t *exit_btn;
 } Strings;
 
 static const Strings str_zh = {
@@ -111,11 +127,14 @@ static const Strings str_zh = {
     L"可执行文件 (*.exe)",
     L"该快捷键已被其他模式使用，请选择其他组合。",
     L"快捷键冲突",
+    L"注册快捷键「%s」失败，可能已被其他程序占用。",
     L"该模式未启用，请在设置中勾选启用。",
     L"尚未为「%s」设置配置文件路径，请先在设置中选择。",
+    L"无法启动 FanControl（路径：%s），请检查 FanControl 是否已安装。",
     L"提示",
     L"（未启用）",
     L"（未配置）",
+    L"退出",
 };
 
 static const Strings str_en = {
@@ -146,18 +165,21 @@ static const Strings str_en = {
     L"Executable Files (*.exe)",
     L"This hotkey is already used by another mode. Please choose a different combination.",
     L"Hotkey Conflict",
+    L"Failed to register hotkey \"%s\". It may already be in use by another program.",
     L"This mode is not enabled. Enable it in Settings.",
     L"No config file set for \"%s\". Please select one in Settings.",
+    L"Failed to start FanControl (path: %s). Please check if FanControl is installed.",
     L"Notice",
     L" (Disabled)",
     L" (Not configured)",
+    L"Exit",
 };
 
 static const Strings *g_str;
 
 typedef struct {
     wchar_t name[32];
-    char    config[MAX_PATH_LEN];
+    char    config[MAX_CONFIG_PATH];
     char    hotkey[MAX_HOTKEY_LEN];
     char    processNames[MAX_PROCESS_NAMES][MAX_PROCESS_LEN];
     int     processCount;
@@ -177,6 +199,7 @@ static int g_showTray = 1;
 static int g_autoSwitch = 1;
 static int g_trayAdded = 0;
 static int g_lastAutoMode = -1;
+static wchar_t g_fanControlExe[MAX_PATH] = FANCONTROL_EXE_DEFAULT;
 
 static HWND g_hwnd;
 static HFONT g_font;
@@ -202,6 +225,18 @@ static BOOL CALLBACK SetChildFontProc(HWND h, LPARAM l) {
     return TRUE;
 }
 
+/* ---------- UTF-8 <-> UTF-16 转换助手 ---------- */
+
+static void Utf8ToWide(const char *src, wchar_t *dst, int dstLen) {
+    if (!src || !dst || dstLen <= 0) return;
+    MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, dstLen);
+}
+
+static void WideToUtf8(const wchar_t *src, char *dst, int dstLen) {
+    if (!src || !dst || dstLen <= 0) return;
+    WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, dstLen, NULL, NULL);
+}
+
 /* ---------- INI ---------- */
 
 static void GetIniPath(void) {
@@ -225,9 +260,9 @@ static void ParseProcessList(int idx, const wchar_t *text) {
         while (len > 0 && (tok[len - 1] == L' ' || tok[len - 1] == L'\t'))
             tok[--len] = 0;
         if (len > 0) {
-            WideCharToMultiByte(CP_UTF8, 0, tok, -1,
+            WideToUtf8(tok,
                 g_modes[idx].processNames[g_modes[idx].processCount],
-                MAX_PROCESS_LEN, NULL, NULL);
+                MAX_PROCESS_LEN);
             g_modes[idx].processCount++;
         }
         tok = wcstok_s(NULL, L",", &ctx);
@@ -239,8 +274,7 @@ static void BuildProcessList(int idx, wchar_t *out, int outLen) {
     int pos = 0;
     for (int i = 0; i < g_modes[idx].processCount; i++) {
         wchar_t wname[MAX_PROCESS_LEN];
-        MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].processNames[i], -1,
-            wname, MAX_PROCESS_LEN);
+        Utf8ToWide(g_modes[idx].processNames[i], wname, MAX_PROCESS_LEN);
         int len = (int)wcslen(wname);
         if (pos + len + 2 >= outLen) break;
         if (i > 0) out[pos++] = L',';
@@ -259,13 +293,11 @@ static void LoadConfig(void) {
         wchar_t wcfg[MAX_PATH];
         GetPrivateProfileStringW(sec, L"Config", L"",
             wcfg, MAX_PATH, g_iniPath);
-        WideCharToMultiByte(CP_UTF8, 0, wcfg, -1,
-            g_modes[i].config, MAX_PATH_LEN, NULL, NULL);
+        WideToUtf8(wcfg, g_modes[i].config, MAX_CONFIG_PATH);
         wchar_t whk[MAX_HOTKEY_LEN];
         GetPrivateProfileStringW(sec, L"Hotkey", L"",
             whk, MAX_HOTKEY_LEN, g_iniPath);
-        WideCharToMultiByte(CP_UTF8, 0, whk, -1,
-            g_modes[i].hotkey, MAX_HOTKEY_LEN, NULL, NULL);
+        WideToUtf8(whk, g_modes[i].hotkey, MAX_HOTKEY_LEN);
         wchar_t wprocs[MAX_PROCESS_LIST_LEN];
         GetPrivateProfileStringW(sec, L"Processes", L"",
             wprocs, MAX_PROCESS_LIST_LEN, g_iniPath);
@@ -274,6 +306,9 @@ static void LoadConfig(void) {
     g_autostart = GetPrivateProfileIntW(L"General", L"AutoStart", 0, g_iniPath);
     g_showTray = GetPrivateProfileIntW(L"General", L"ShowTray", 1, g_iniPath);
     g_autoSwitch = GetPrivateProfileIntW(L"General", L"AutoSwitch", 1, g_iniPath);
+    GetPrivateProfileStringW(L"General", L"FanControlExe", FANCONTROL_EXE_DEFAULT,
+        g_fanControlExe, MAX_PATH, g_iniPath);
+    g_lastAutoMode = -1;
 }
 
 static void SaveConfig(void) {
@@ -283,10 +318,10 @@ static void SaveConfig(void) {
         _snwprintf(buf, 16, L"%d", g_modes[i].enabled);
         WritePrivateProfileStringW(sec, L"Enabled", buf, g_iniPath);
         wchar_t wcfg[MAX_PATH];
-        MultiByteToWideChar(CP_UTF8, 0, g_modes[i].config, -1, wcfg, MAX_PATH);
+        Utf8ToWide(g_modes[i].config, wcfg, MAX_PATH);
         WritePrivateProfileStringW(sec, L"Config", wcfg, g_iniPath);
         wchar_t whk[MAX_HOTKEY_LEN];
-        MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, whk, MAX_HOTKEY_LEN);
+        Utf8ToWide(g_modes[i].hotkey, whk, MAX_HOTKEY_LEN);
         WritePrivateProfileStringW(sec, L"Hotkey", whk, g_iniPath);
         wchar_t wprocs[MAX_PROCESS_LIST_LEN];
         BuildProcessList(i, wprocs, MAX_PROCESS_LIST_LEN);
@@ -299,6 +334,7 @@ static void SaveConfig(void) {
     WritePrivateProfileStringW(L"General", L"ShowTray", buf, g_iniPath);
     _snwprintf(buf, 16, L"%d", g_autoSwitch);
     WritePrivateProfileStringW(L"General", L"AutoSwitch", buf, g_iniPath);
+    WritePrivateProfileStringW(L"General", L"FanControlExe", g_fanControlExe, g_iniPath);
 }
 
 /* ---------- Auto Start (Registry) ---------- */
@@ -389,7 +425,19 @@ static void RegisterAllHotkeys(void) {
         UINT mods, vk;
         if (ParseHotkey(g_modes[i].hotkey, &mods, &vk)) {
             g_modes[i].hotkeyId = i + 1;
-            RegisterHotKey(g_hwnd, g_modes[i].hotkeyId, mods, vk);
+            if (!RegisterHotKey(g_hwnd, g_modes[i].hotkeyId, mods, vk)) {
+                /* 注册失败：清空 id，避免后续误判；提示用户 */
+                g_modes[i].hotkeyId = 0;
+                if (g_hwnd) {
+                    wchar_t whk[MAX_HOTKEY_LEN];
+                    Utf8ToWide(g_modes[i].hotkey, whk, MAX_HOTKEY_LEN);
+                    wchar_t msg[128];
+                    _snwprintf(msg, 128,
+                        g_str->hotkey_register_failed_fmt, whk);
+                    MessageBoxW(g_hwnd, msg, g_str->notice,
+                        MB_OK | MB_ICONWARNING);
+                }
+            }
         }
     }
 }
@@ -463,28 +511,35 @@ static void SwitchTo(int idx, int silent) {
     }
     wchar_t args[MAX_PATH * 2];
     wchar_t wcfg[MAX_PATH];
-    MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].config, -1, wcfg, MAX_PATH);
+    Utf8ToWide(g_modes[idx].config, wcfg, MAX_PATH);
     _snwprintf(args, sizeof(args)/sizeof(args[0]), L"-c \"%s\"", wcfg);
-    ShellExecuteW(NULL, L"open", FANCONTROL_EXE, args, NULL, SW_HIDE);
+    HINSTANCE hInst = ShellExecuteW(NULL, L"open", g_fanControlExe, args, NULL, SW_HIDE);
+    /* ShellExecuteW 返回值 <= 32 表示错误（含路径不存在），仅手动触发时提示 */
+    if ((INT_PTR)hInst <= 32 && !silent) {
+        wchar_t msg[MAX_PATH + 128];
+        _snwprintf(msg, MAX_PATH + 128, g_str->fancontrol_not_found_fmt, g_fanControlExe);
+        MessageBoxW(g_hwnd, msg, g_str->notice, MB_OK | MB_ICONERROR);
+    }
 }
 
 static void CheckProcessTriggers(void) {
     if (!g_autoSwitch) return;
+    /* 按优先级从高到低遍历：涡轮(idx=3) > 野兽(idx=2) > 日常(idx=1) > 静音(idx=0) */
     int target = -1;
-    for (int i = MAX_MODES - 1; i >= 0; i--) {
+    for (int i = MAX_MODES - 1; i >= 0 && target < 0; i--) {
         if (!g_modes[i].enabled || g_modes[i].processCount <= 0) continue;
         for (int j = 0; j < g_modes[i].processCount; j++) {
             wchar_t wname[MAX_PROCESS_LEN];
-            MultiByteToWideChar(CP_UTF8, 0, g_modes[i].processNames[j], -1,
-                wname, MAX_PROCESS_LEN);
+            Utf8ToWide(g_modes[i].processNames[j], wname, MAX_PROCESS_LEN);
             if (IsProcessRunning(wname)) {
                 target = i;
-                i = -1;
                 break;
             }
         }
     }
+    /* 无进程命中则恢复默认模式（日常） */
     if (target < 0) target = DEFAULT_MODE_INDEX;
+    /* 仅在目标模式变化时切换，避免重复调用 */
     if (target != g_lastAutoMode) {
         SwitchTo(target, 1);
         g_lastAutoMode = target;
@@ -500,7 +555,7 @@ static void RefreshMainButtons(void) {
             _snwprintf(label, 96, L"%s%s", g_modes[i].name, g_str->not_configured_suffix);
         } else if (g_modes[i].hotkey[0]) {
             wchar_t whk[MAX_HOTKEY_LEN];
-            MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, whk, MAX_HOTKEY_LEN);
+            Utf8ToWide(g_modes[i].hotkey, whk, MAX_HOTKEY_LEN);
             _snwprintf(label, 96, L"%s (%s)", g_modes[i].name, whk);
         } else {
             _snwprintf(label, 96, L"%s", g_modes[i].name);
@@ -577,7 +632,7 @@ static LRESULT CALLBACK CaptureProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             if (g_capTarget >= 0) {
                 /* 将捕获结果转为窄字符串并用 ParseHotkey 解析 */
                 char buf_a[64];
-                WideCharToMultiByte(CP_UTF8, 0, buf, -1, buf_a, 64, NULL, NULL);
+                WideToUtf8(buf, buf_a, 64);
                 UINT newMods, newVk;
                 int ok = ParseHotkey(buf_a, &newMods, &newVk);
 
@@ -658,8 +713,7 @@ static void RefreshProcessList(int idx) {
     SendMessage(g_swProcList[idx], LB_RESETCONTENT, 0, 0);
     for (int i = 0; i < g_modes[idx].processCount; i++) {
         wchar_t wname[MAX_PROCESS_LEN];
-        MultiByteToWideChar(CP_UTF8, 0, g_modes[idx].processNames[i], -1,
-            wname, MAX_PROCESS_LEN);
+        Utf8ToWide(g_modes[idx].processNames[i], wname, MAX_PROCESS_LEN);
         SendMessage(g_swProcList[idx], LB_ADDSTRING, 0, (LPARAM)wname);
     }
 }
@@ -675,7 +729,16 @@ static void UpdateProcessControlsState(void) {
     }
 }
 
-static int IsProcessNameDuplicate(int idx, const wchar_t *name);
+static int IsProcessNameDuplicate(int idx, const wchar_t *name) {
+    char name_a[MAX_PROCESS_LEN];
+    WideToUtf8(name, name_a, MAX_PROCESS_LEN);
+    for (int i = 0; i < g_modes[idx].processCount; i++) {
+        if (_stricmp(g_modes[idx].processNames[i], name_a) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static void OpenExeBrowseDialog(int idx) {
     wchar_t file[MAX_PATH] = L"";
     wchar_t filter[256];
@@ -699,23 +762,13 @@ static void OpenExeBrowseDialog(int idx) {
         else name = file;
         if (!IsProcessNameDuplicate(idx, name)
             && g_modes[idx].processCount < MAX_PROCESS_NAMES) {
-            WideCharToMultiByte(CP_UTF8, 0, name, -1,
+            WideToUtf8(name,
                 g_modes[idx].processNames[g_modes[idx].processCount],
-                MAX_PROCESS_LEN, NULL, NULL);
+                MAX_PROCESS_LEN);
             g_modes[idx].processCount++;
             RefreshProcessList(idx);
         }
     }
-}
-
-static int IsProcessNameDuplicate(int idx, const wchar_t *name) {
-    char name_a[MAX_PROCESS_LEN];
-    WideCharToMultiByte(CP_UTF8, 0, name, -1, name_a, MAX_PROCESS_LEN, NULL, NULL);
-    for (int i = 0; i < g_modes[idx].processCount; i++) {
-        if (_stricmp(g_modes[idx].processNames[i], name_a) == 0)
-            return 1;
-    }
-    return 0;
 }
 
 static void AddProcessFromEdit(int idx) {
@@ -730,9 +783,9 @@ static void AddProcessFromEdit(int idx) {
     if (len <= pos) return;
     wchar_t *clean = name + pos;
     if (IsProcessNameDuplicate(idx, clean)) return;
-    WideCharToMultiByte(CP_UTF8, 0, clean, -1,
+    WideToUtf8(clean,
         g_modes[idx].processNames[g_modes[idx].processCount],
-        MAX_PROCESS_LEN, NULL, NULL);
+        MAX_PROCESS_LEN);
     g_modes[idx].processCount++;
     RefreshProcessList(idx);
     SetWindowTextW(g_swProcEdt[idx], L"");
@@ -815,7 +868,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                 108, y, 270, 26, h, NULL, cs->hInstance, NULL);
             wchar_t cfgw[MAX_PATH];
-            MultiByteToWideChar(CP_UTF8, 0, g_modes[i].config, -1, cfgw, MAX_PATH);
+            Utf8ToWide(g_modes[i].config, cfgw, MAX_PATH);
             SetWindowTextW(g_swEdtCfg[i], cfgw);
             g_swBtnBrw[i] = CreateWindowW(L"BUTTON", g_str->browse,
                 WS_CHILD | WS_VISIBLE, 385, y, 95, 28, h,
@@ -828,7 +881,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                 108, y, 120, 26, h, NULL, cs->hInstance, NULL);
             wchar_t hkw[MAX_HOTKEY_LEN];
-            MultiByteToWideChar(CP_UTF8, 0, g_modes[i].hotkey, -1, hkw, MAX_HOTKEY_LEN);
+            Utf8ToWide(g_modes[i].hotkey, hkw, MAX_HOTKEY_LEN);
             SetWindowTextW(g_swEdtHk[i], hkw);
             g_swBtnCap[i] = CreateWindowW(L"BUTTON", g_str->capture_btn,
                 WS_CHILD | WS_VISIBLE, 235, y, 75, 26, h,
@@ -901,12 +954,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                         g_swChk[i], BM_GETCHECK, 0, 0) == BST_CHECKED);
                     wchar_t wcfg[MAX_PATH];
                     GetWindowTextW(g_swEdtCfg[i], wcfg, MAX_PATH);
-                    WideCharToMultiByte(CP_UTF8, 0, wcfg, -1,
-                        g_modes[i].config, MAX_PATH_LEN, NULL, NULL);
+                    WideToUtf8(wcfg, g_modes[i].config, MAX_CONFIG_PATH);
                     wchar_t whk[MAX_HOTKEY_LEN];
                     GetWindowTextW(g_swEdtHk[i], whk, MAX_HOTKEY_LEN);
-                    WideCharToMultiByte(CP_UTF8, 0, whk, -1,
-                        g_modes[i].hotkey, MAX_HOTKEY_LEN, NULL, NULL);
+                    WideToUtf8(whk, g_modes[i].hotkey, MAX_HOTKEY_LEN);
                 }
                 g_autostart = (SendMessage(
                     g_swChkStartup, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -958,6 +1009,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         return 0;
     case WM_CLOSE:
+        LoadConfig();
         DestroyWindow(h);
         g_swHwnd = NULL;
         RegisterAllHotkeys();
@@ -996,6 +1048,8 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             int id = LOWORD(w);
             if (id == IDC_SETTINGS)
                 OpenSettings((HINSTANCE)GetWindowLongPtr(h, GWLP_HINSTANCE));
+            else if (id == IDC_EXIT)
+                DestroyWindow(h);
             else if (id == IDM_TRAY_SHOW) {
                 ShowWindow(h, SW_SHOW);
                 SetForegroundWindow(h);
@@ -1106,7 +1160,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
 
     g_hwnd = CreateWindowW(L"fcgui", g_str->app_title,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 290, 330, NULL, NULL, hi, NULL);
+        CW_USEDEFAULT, CW_USEDEFAULT, 290, 380, NULL, NULL, hi, NULL);
 
     int y = 12;
     for (int i = 0; i < MAX_MODES; i++) {
@@ -1118,7 +1172,10 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, LPWSTR cmd, int show) {
     }
     CreateWindowW(L"BUTTON", g_str->settings,
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        20, y + 8, 240, 36, g_hwnd, (HMENU)IDC_SETTINGS, hi, NULL);
+        20, y + 4, 115, 36, g_hwnd, (HMENU)IDC_SETTINGS, hi, NULL);
+    CreateWindowW(L"BUTTON", g_str->exit_btn,
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        145, y + 4, 115, 36, g_hwnd, (HMENU)IDC_EXIT, hi, NULL);
 
     EnumChildWindows(g_hwnd, (WNDENUMPROC)SetChildFontProc, (LPARAM)g_font);
 
