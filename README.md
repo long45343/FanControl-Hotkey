@@ -21,7 +21,7 @@ FanControl detects the running instance and hot-swaps the configuration without 
 
 ### Requirements
 
-- [MinGW-w64](https://www.mingw-w64.org/) toolchain (GCC)
+- [MinGW-w64](https://www.mingw-w64.org/) toolchain (GCC)(w64devkit)
 
 ### Compile
 
