@@ -23,7 +23,7 @@ FanControl 检测到已有实例运行后，会热切换配置而无需重启。
 
 ### 环境要求
 
-- [MinGW-w64](https://www.mingw-w64.org/) 工具链（GCC）
+- [MinGW-w64](https://www.mingw-w64.org/) 工具链（GCC）(w64devkit)
 
 ### 编译命令
 
