@@ -19,3 +19,4 @@ Agents.md
 gen_icon.py
 icon_preview.png
 *.png
+/specs/
