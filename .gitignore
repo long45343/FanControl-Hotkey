@@ -12,3 +12,6 @@ tests/test_main.exe
 *.tmp
 .vscode/
 .idea/
+
+# specs
+/specs/
