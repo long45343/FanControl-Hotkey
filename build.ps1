@@ -7,8 +7,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (Test-Path $MinGWPath) {
-    $env:Path = "$MinGWPath;" + $env:Path
+$candidatePaths = @(
+    $MinGWPath,
+    "C:\msys64\mingw64\bin",
+    "C:\msys64\ucrt64\bin",
+    "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+)
+
+foreach ($p in $candidatePaths) {
+    if ($p -and (Test-Path $p)) {
+        $env:Path = "$p;" + $env:Path
+        break
+    }
 }
 
 if ($Clean) {
