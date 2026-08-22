@@ -1,102 +1,92 @@
-# FanControl Hotkey
+# FanControl Hotkey (v1.0)
 
-超轻量的采用快捷键实现切换Fancontrol配置工具
+[English](README.md) | **简体中文**
 
-## 功能
+一个轻量级的 [FanControl](https://getfancontrol.com/) 风扇模式热键与进程感知自动切换工具。纯 Win32 API 原生 C 实现，零运行时依赖，支持 Per-Monitor V2 高 DPI 缩放。
+
+---
+
+## ✨ 核心特性
 
 - **四种风扇模式切换**：静音模式 / 日常模式 / 野兽模式 / 涡轮模式
-- **自定义快捷键**：为每个模式配置热键（如 `Ctrl+Alt+1`）
-- **GUI 设置窗口**：浏览选择配置文件、自定义热键、启用/禁用各模式
-- **零依赖**：下载单exe即可运行
+- **自定义快捷键绑定**：支持为每个模式配置任意组合键（如 `Ctrl+Alt+1`、`Shift+Win+F12`）
+- **进程感知自动切换**：后台 $O(1)$ FNV-1a 哈希匹配活动进程（如检测到 `Cyberpunk2077.exe` 自动切至野兽/涡轮模式，退出后平滑切回日常模式）
+- **GUI 设置窗口**：支持浏览选择 FanControl 路径与配置文件、自定义热键、增删进程规则
+- **事务性设置草稿（Draft）**：设置界面编辑操作与运行态完全隔离，取消（Cancel）零副作用，确定（OK）原子应用
+- **安全加固**：
+  - 开机自启使用严格双引号路径包裹（`\"%s\" %s`），杜绝未加引号启动路径（Unquoted Search Path）劫持漏洞
+  - 外部 FanControl 启动采用 `CreateProcessW` 安全转义与路径校验，消除 ShellExecute 注入与歧义
+- **原生宽字符与高 DPI 适配**：内部全链路采用 `wchar_t` (UTF-16)，结合应用程序清单（Manifest）与动态等比缩放，4K 高分屏原生清晰不模糊
+- **系统托盘与单实例保护**：支持隐藏到托盘、重复启动智能置前已有窗口
+- **零外部依赖**：仅链接 Windows 系统 DLL（`USER32`、`SHELL32`、`COMDLG32`、`ADVAPI32`、`GDI32`）
 
-## 工作原理
+---
 
-通过如下方式实现配置文件切换：
-
-```
-FanControl.exe -c <配置文件.json>
-```
-
-FanControl 检测到已有实例运行后，会热切换配置而无需重启。
-
-## 编译
+## 🛠️ 构建与测试
 
 ### 环境要求
 
-- [MinGW-w64](https://www.mingw-w64.org/) 工具链（GCC）(w64devkit)
+- **MinGW-w64**（GCC 8.0+，支持 C99/C11）
 
-### 编译命令
+### 本地编译
+
+#### 方式一：PowerShell 脚本（推荐）
+
+```powershell
+# 编译生成 FanControlHotkey.exe
+.\build.ps1
+
+# 运行自动化单元测试
+.\build.ps1 -Test
+
+# 清理构建产物
+.\build.ps1 -Clean
+```
+
+#### 方式二：Make 编译
 
 ```bash
-windres resource.rc -O coff -o resource.o
-gcc -mwindows -municode -Os -s -D_UNICODE -DUNICODE -o FanControlHotkey.exe fan_hotkey.c resource.o -luser32 -lshell32 -lcomdlg32 -ladvapi32 -lgdi32
+# 编译应用程序
+make
+
+# 运行单元测试
+make test
+
+# 清理
+make clean
 ```
 
-- `windres resource.rc -O coff -o resource.o`：将图标资源编译为对象文件
-- `-mwindows`：GUI 子系统，无控制台窗口
-- `-municode`：使用 `wWinMain` 入口点，支持 Unicode
-- `-Os`：体积优先优化
-- `-s`：去除符号表
-- `-D_UNICODE -DUNICODE`：启用 Win32 API 的 Unicode 宏
-- 链接库说明：
-  - `-luser32`：窗口消息、热键、托盘图标
-  - `-lshell32`：执行外部程序、托盘通知
-  - `-lcomdlg32`：通用文件对话框
-  - `-ladvapi32`：注册表读写（开机自启）
-  - `-lgdi32`：字体与 GDI 资源
+---
 
-### 编译参数说明
+## 📂 项目结构
 
-| 参数 | 作用 |
-|---|---|
-| `-mwindows` | 无控制台，GUI 程序 |
-| `-municode` | Unicode `wWinMain` 入口 |
-| `-Os` | 体积优化 |
-| `-s` | 去除符号表 |
-| `-D_UNICODE -DUNICODE` | 启用 Unicode 宏 |
-
-## 使用方法
-
-1. 在 FanControl 界面中配置四套风扇策略，分别导出为 JSON 文件，导出的文件默认在fancontrol的安装位置，如C:\Program Files (x86)\FanControl\Configurations。
-2. 运行 `FanControlHotkey.exe`。
-3. 点击 **设置** 按钮配置每个模式：
-   - 勾选 **启用** 需要使用的模式
-   - 点击 **选择路径...** 选择对应的 JSON 配置文件
-   - 填写快捷键（格式：`Ctrl+Alt+1`、`Shift+F5` 等）
-4. 点击 **确定** 保存。
-5. 通过热键或主窗口按钮切换模式。
-
-### 快捷键格式
-
-```
-Ctrl+Alt+1
-Ctrl+Shift+F5
-Win+Alt+S
+```text
+├── .github/workflows/ci.yml   # GitHub Actions 持续集成与 Release 自动打包
+├── src/                       # 模块化源代码
+│   ├── main.c                 # 程序入口与单实例互斥量
+│   ├── app_context.h          # 全局上下文与数据模型定义
+│   ├── strings.h / .c         # 双语字符串表 (中/英)
+│   ├── config.h / .c          # INI 配置序列化、自启管理与草稿克隆
+│   ├── hotkey.h / .c          # 快捷键解析器与热键注册管理
+│   ├── process_monitor.h / .c # 进程快照采集与 FNV-1a 哈希匹配引擎
+│   ├── runner.h / .c          # CreateProcessW 安全进程拉起
+│   ├── dpi_utils.h / .c       # Per-Monitor DPI 动态缩放工具
+│   ├── ui_main.h / .c         # 主窗口与托盘消息循环
+│   └── ui_settings.h / .c     # 设置窗口与热键捕获 (基于 Draft 事务交互)
+├── tests/
+│   └── test_main.c            # 纯 C 微型自动化单元测试套件
+├── res/                       # 资源文件
+│   ├── app.manifest           # Per-Monitor V2 DPI-Aware 清单
+│   ├── resource.h / .rc       # PE 图标与 VERSIONINFO 资源定义
+│   └── icon.ico               # 应用程序图标
+├── specs/                     # 架构规范与锐评决策归档
+├── build.ps1                  # PowerShell 构建脚本
+├── Makefile                   # 标准 Makefile
+└── README-Zh-CN.md            # 中文说明文档
 ```
 
-支持的修饰键：`Ctrl`/`Control`、`Alt`、`Shift`、`Win`
-支持的按键：单个字符（A-Z, 0-9）或 F1-F12
+---
 
-## 配置文件
+## 📄 开源许可证
 
-设置保存在 exe 同目录的 `fan_hotkey.ini`：
-
-```ini
-[General]
-AutoStart=0
-ShowTray=1
-
-[Mode0]
-Enabled=1
-Config=C:\path\to\silent.json
-Hotkey=Ctrl+Alt+1
-
-[Mode1]
-Enabled=1
-Config=C:\path\to\normal.json
-Hotkey=Ctrl+Alt+2
-```
-
-## 许可证
-
-MIT
+本项目基于 [MIT 许可证](LICENSE) 开源。

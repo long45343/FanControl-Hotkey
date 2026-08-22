@@ -1,0 +1,72 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup MinGW
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      - name: Run Unit Tests
+        shell: pwsh
+        run: |
+          .\build.ps1 -MinGWPath "" -Test
+
+      - name: Build Application
+        shell: pwsh
+        run: |
+          .\build.ps1 -MinGWPath ""
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FanControlHotkey
+          path: FanControlHotkey.exe
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FanControlHotkey
+          path: release/
+
+      - name: Package Release Zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release/FanControlHotkey.exe -DestinationPath FanControlHotkey-${{ github.ref_name }}.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            FanControlHotkey-${{ github.ref_name }}.zip
+            release/FanControlHotkey.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
