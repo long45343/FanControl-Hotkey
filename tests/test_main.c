@@ -127,6 +127,14 @@ static void Test_Config_Clone(void) {
     TEST_ASSERT(src.autostart == 1, "Draft isolation: modifying clone does not mutate original");
 }
 
+static void Test_Config_Ini_Path(void) {
+    printf("[RUN] Test_Config_Ini_Path...\n");
+    wchar_t path[MAX_PATH];
+    Config_GetIniPath(path, MAX_PATH);
+    TEST_ASSERT(wcslen(path) > 4, "Config INI path is not empty");
+    TEST_ASSERT(wcsstr(path, L".ini") != NULL, "Config path ends with .ini");
+}
+
 static void Test_Dpi_Scale(void) {
     printf("[RUN] Test_Dpi_Scale...\n");
     TEST_ASSERT(DPI_Scale(100, 96) == 100, "100% DPI (96) scaling is 100");
@@ -145,6 +153,7 @@ int wmain(void) {
     Test_Process_List_Parse_And_Build();
     Test_Process_Hash_And_Matching();
     Test_Config_Clone();
+    Test_Config_Ini_Path();
     Test_Dpi_Scale();
 
     printf("==========================================\n");
@@ -157,4 +166,3 @@ int wmain(void) {
         return 1;
     }
 }
-

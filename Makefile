@@ -29,6 +29,10 @@ $(TEST_TARGET): $(TEST_SRCS)
 	$(CC) $(CFLAGS) $(TEST_SRCS) -o $(TEST_TARGET) $(LDFLAGS_CLI)
 
 clean:
+ifeq ($(OS),Windows_NT)
+	-@del /Q /F src\*.o res\*.o $(TARGET) $(subst /,\,$(TEST_TARGET)) 2>nul || rm -f src/*.o res/*.o $(TARGET) $(TEST_TARGET)
+else
 	rm -f src/*.o res/*.o $(TARGET) $(TEST_TARGET)
+endif
 
 .PHONY: all test clean

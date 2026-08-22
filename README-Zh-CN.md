@@ -1,24 +1,25 @@
-# FanControl Hotkey (v1.0)
+# FanControl Hotkey (v1.1)
 
 [English](README.md) | **简体中文**
 
-一个轻量级的 [FanControl](https://getfancontrol.com/) 风扇模式热键与进程感知自动切换工具。纯 Win32 API 原生 C 实现，零运行时依赖，支持 Per-Monitor V2 高 DPI 缩放。
+一款专为 [FanControl](https://getfancontrol.com/) 打造的轻量级快捷键与进程感知风扇模式自动切换工具。基于纯原生 C 语言与 Win32 API 编写，零外部运行时依赖，原生支持 Per-Monitor V2 高分屏 DPI 缩放。
 
 ---
 
 ## ✨ 核心特性
 
-- **四种风扇模式切换**：静音模式 / 日常模式 / 野兽模式 / 涡轮模式
-- **自定义快捷键绑定**：支持为每个模式配置任意组合键（如 `Ctrl+Alt+1`、`Shift+Win+F12`）
-- **进程感知自动切换**：后台 $O(1)$ FNV-1a 哈希匹配活动进程（如检测到 `Cyberpunk2077.exe` 自动切至野兽/涡轮模式，退出后平滑切回日常模式）
-- **GUI 设置窗口**：支持浏览选择 FanControl 路径与配置文件、自定义热键、增删进程规则
-- **事务性设置草稿（Draft）**：设置界面编辑操作与运行态完全隔离，取消（Cancel）零副作用，确定（OK）原子应用
-- **安全加固**：
-  - 开机自启使用严格双引号路径包裹（`\"%s\" %s`），杜绝未加引号启动路径（Unquoted Search Path）劫持漏洞
-  - 外部 FanControl 启动采用 `CreateProcessW` 安全转义与路径校验，消除 ShellExecute 注入与歧义
-- **原生宽字符与高 DPI 适配**：内部全链路采用 `wchar_t` (UTF-16)，结合应用程序清单（Manifest）与动态等比缩放，4K 高分屏原生清晰不模糊
-- **系统托盘与单实例保护**：支持隐藏到托盘、重复启动智能置前已有窗口
-- **零外部依赖**：仅链接 Windows 系统 DLL（`USER32`、`SHELL32`、`COMDLG32`、`ADVAPI32`、`GDI32`）
+- **4 种风扇模式预设**：静音 / 日常 / 野兽 / 涡轮
+- **自定义快捷键绑定**：支持任意组合键捕获与绑定（如 `Ctrl+Alt+1`、`Shift+Win+F12`）
+- **异步后台进程感知自动切换**：专属后台工作线程与 $O(1)$ FNV-1a 哈希匹配（如启动 `Cyberpunk2077.exe` 自动切为野兽/涡轮，退出时自动回退为日常）
+- **可视化图形设置窗口**：图形化浏览 FanControl 路径、模式配置文件、快捷键捕获与关联进程管理
+- **事务级草稿隔离机制 (Draft Isolation)**：设置窗口采用内存临时草稿，点击“取消”零副作用，点击“确定”原子提交应用
+- **安全加固与健壮持久化**：
+  - 开机自启注册表写入严格双引号包裹路径 (`\"%s\" %s`)，并校验运行路径一致性
+  - 多级配置存储策略：优先可执行文件同级便携式 `.ini`，受保护目录自动回退至 `%APPDATA%\FanControlHotkey\`
+  - 外部进程通过 `CreateProcessW` 安全拉起，配合参数转义与文件存在性校验
+- **原生宽字符与 Per-Monitor V2 高分屏**：全链路采用 `wchar_t` (UTF-16)，清单声明 DPI-Aware 并动态缩放 GDI 字体
+- **系统托盘与单实例防护**：常驻系统托盘，重复启动自动唤醒并激活已有实例窗口
+- **零外部依赖**：仅链接 Windows 原生系统动态库（`USER32`、`SHELL32`、`COMDLG32`、`ADVAPI32`、`GDI32`）
 
 ---
 
@@ -26,33 +27,33 @@
 
 ### 环境要求
 
-- **MinGW-w64**（GCC 8.0+，支持 C99/C11）
+- **MinGW-w64**（GCC 8.0+，支持 C99/C11 标准）
 
 ### 本地编译
 
-#### 方式一：PowerShell 脚本（推荐）
+#### 方式一：PowerShell 构建脚本（推荐）
 
 ```powershell
 # 编译生成 FanControlHotkey.exe
 .\build.ps1
 
-# 运行自动化单元测试
+# 编译并运行自动化单元测试
 .\build.ps1 -Test
 
 # 清理构建产物
 .\build.ps1 -Clean
 ```
 
-#### 方式二：Make 编译
+#### 方式二：Make 命令
 
 ```bash
-# 编译应用程序
+# 构建可执行文件
 make
 
 # 运行单元测试
 make test
 
-# 清理
+# 清理构建产物
 make clean
 ```
 
@@ -61,32 +62,32 @@ make clean
 ## 📂 项目结构
 
 ```text
-├── .github/workflows/ci.yml   # GitHub Actions 持续集成与 Release 自动打包
-├── src/                       # 模块化源代码
-│   ├── main.c                 # 程序入口与单实例互斥量
-│   ├── app_context.h          # 全局上下文与数据模型定义
-│   ├── strings.h / .c         # 双语字符串表 (中/英)
-│   ├── config.h / .c          # INI 配置序列化、自启管理与草稿克隆
-│   ├── hotkey.h / .c          # 快捷键解析器与热键注册管理
-│   ├── process_monitor.h / .c # 进程快照采集与 FNV-1a 哈希匹配引擎
-│   ├── runner.h / .c          # CreateProcessW 安全进程拉起
-│   ├── dpi_utils.h / .c       # Per-Monitor DPI 动态缩放工具
-│   ├── ui_main.h / .c         # 主窗口与托盘消息循环
-│   └── ui_settings.h / .c     # 设置窗口与热键捕获 (基于 Draft 事务交互)
+├── .github/workflows/ci.yml   # GitHub Actions CI 与自动 Release 打包流水线
+├── src/                       # 模块化纯 C 源码
+│   ├── main.c                 # 程序入口与互斥量单实例保护
+│   ├── app_context.h          # 全局数据模型与上下文定义
+│   ├── strings.h / .c         # 双语本地化字符表（中 / 英）
+│   ├── config.h / .c          # INI 配置读写、AppData 回退与自启动管理
+│   ├── hotkey.h / .c          # 快捷键解析、冲突检测与热键注册
+│   ├── process_monitor.h / .c # 后台监控工作线程与 FNV-1a 哈希匹配引擎
+│   ├── runner.h / .c          # CreateProcessW 安全进程启动器
+│   ├── dpi_utils.h / .c       # Per-Monitor V2 DPI 动态适配与字体创建
+│   ├── ui_main.h / .c         # 主窗口（GWLP_USERDATA 绑定）与托盘消息循环
+│   └── ui_settings.h / .c     # 模块化设置窗口与按键捕获
 ├── tests/
-│   └── test_main.c            # 纯 C 微型自动化单元测试套件
+│   └── test_main.c            # 纯 C 微型单元测试套件
 ├── res/                       # 资源文件
-│   ├── app.manifest           # Per-Monitor V2 DPI-Aware 清单
-│   ├── resource.h / .rc       # PE 图标与 VERSIONINFO 资源定义
+│   ├── app.manifest           # Per-Monitor V2 DPI 清单与系统兼容性声明
+│   ├── resource.h / .rc       # 应用图标与 VERSIONINFO 资源
 │   └── icon.ico               # 应用程序图标
-├── specs/                     # 架构规范与锐评决策归档
-├── build.ps1                  # PowerShell 构建脚本
-├── Makefile                   # 标准 Makefile
-└── README-Zh-CN.md            # 中文说明文档
+├── specs/                     # 架构规范、决策记录与代码审查归档
+├── build.ps1                  # Windows PowerShell 构建脚本
+├── Makefile                   # 跨平台 Makefile
+└── README.md                  # 英文说明文档
 ```
 
 ---
 
-## 📄 开源许可证
+## 📄 开源许可
 
-本项目基于 [MIT 许可证](LICENSE) 开源。
+本项目遵循 [MIT 开源许可证](LICENSE)。

@@ -95,7 +95,7 @@ int ProcessMonitor_EvaluateTargetMode(const AppConfig *config, const wchar_t (*r
     return DEFAULT_MODE_INDEX;
 }
 
-void ProcessMonitor_CheckAndTrigger(AppContext *ctx) {
+static void CheckAndDispatch(AppContext *ctx) {
     if (!ctx || !ctx->config.autoSwitch) return;
 
     static wchar_t runningNames[MAX_RUNNING_PROCS][MAX_PROCESS_LEN];
@@ -104,7 +104,50 @@ void ProcessMonitor_CheckAndTrigger(AppContext *ctx) {
 
     int target = ProcessMonitor_EvaluateTargetMode(&ctx->config, runningNames, runningCount);
     if (target != ctx->lastAutoMode) {
-        Runner_SwitchTo(ctx, target, 1);
         ctx->lastAutoMode = target;
+        if (ctx->hwndMain) {
+            PostMessageW(ctx->hwndMain, WM_AUTO_SWITCH_MODE, (WPARAM)target, 0);
+        }
     }
+}
+
+static DWORD WINAPI MonitorThreadProc(LPVOID lpParam) {
+    AppContext *ctx = (AppContext *)lpParam;
+    if (!ctx) return 0;
+
+    while (1) {
+        DWORD waitRes = WaitForSingleObject(ctx->hMonitorStopEvent, POLL_INTERVAL_MS);
+        if (waitRes != WAIT_TIMEOUT) {
+            break;
+        }
+        CheckAndDispatch(ctx);
+    }
+    return 0;
+}
+
+void ProcessMonitor_Start(AppContext *ctx) {
+    if (!ctx || ctx->hMonitorThread) return;
+    ctx->hMonitorStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!ctx->hMonitorStopEvent) return;
+    ctx->hMonitorThread = CreateThread(NULL, 0, MonitorThreadProc, ctx, 0, NULL);
+}
+
+void ProcessMonitor_Stop(AppContext *ctx) {
+    if (!ctx) return;
+    if (ctx->hMonitorStopEvent) {
+        SetEvent(ctx->hMonitorStopEvent);
+    }
+    if (ctx->hMonitorThread) {
+        WaitForSingleObject(ctx->hMonitorThread, 3000);
+        CloseHandle(ctx->hMonitorThread);
+        ctx->hMonitorThread = NULL;
+    }
+    if (ctx->hMonitorStopEvent) {
+        CloseHandle(ctx->hMonitorStopEvent);
+        ctx->hMonitorStopEvent = NULL;
+    }
+}
+
+void ProcessMonitor_TriggerOnce(AppContext *ctx) {
+    CheckAndDispatch(ctx);
 }

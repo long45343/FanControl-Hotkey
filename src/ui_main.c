@@ -9,9 +9,6 @@
 #include "dpi_utils.h"
 #include "strings.h"
 
-static HWND g_btnMain[MAX_MODES];
-static AppContext *g_mainCtx = NULL;
-
 static BOOL CALLBACK SetChildFontProc(HWND h, LPARAM l) {
     SendMessage(h, WM_SETFONT, l, TRUE);
     return TRUE;
@@ -22,6 +19,9 @@ void UIMain_RefreshButtons(AppContext *ctx) {
     const AppStrings *s = Strings_Get();
 
     for (int i = 0; i < MAX_MODES; i++) {
+        HWND hBtn = GetDlgItem(ctx->hwndMain, IDC_BTN_BASE + i);
+        if (!hBtn) continue;
+
         const ModeConfig *m = &ctx->config.modes[i];
         wchar_t label[96];
         if (!m->enabled) {
@@ -33,7 +33,7 @@ void UIMain_RefreshButtons(AppContext *ctx) {
         } else {
             _snwprintf(label, 96, L"%s", m->name);
         }
-        SetWindowTextW(g_btnMain[i], label);
+        SetWindowTextW(hBtn, label);
     }
 }
 
@@ -85,7 +85,14 @@ static void ShowTrayMenu(AppContext *ctx) {
 }
 
 static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    AppContext *ctx = g_mainCtx;
+    if (m == WM_NCCREATE) {
+        CREATESTRUCTW *cs = (CREATESTRUCTW *)l;
+        SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+        return DefWindowProcW(h, m, w, l);
+    }
+
+    AppContext *ctx = (AppContext *)GetWindowLongPtrW(h, GWLP_USERDATA);
+
     switch (m) {
     case WM_HOTKEY: {
         int id = (int)w;
@@ -94,6 +101,13 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 Runner_SwitchTo(ctx, i, 0);
                 break;
             }
+        }
+        return 0;
+    }
+    case WM_AUTO_SWITCH_MODE: {
+        int modeIdx = (int)w;
+        if (ctx) {
+            Runner_SwitchTo(ctx, modeIdx, 1);
         }
         return 0;
     }
@@ -133,13 +147,7 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_CLOSE:
         ShowWindow(h, SW_HIDE);
         return 0;
-    case WM_TIMER:
-        if (w == TIMER_POLL_ID) {
-            ProcessMonitor_CheckAndTrigger(ctx);
-        }
-        return 0;
     case WM_DESTROY:
-        KillTimer(h, TIMER_POLL_ID);
         RemoveTrayIcon(ctx);
         PostQuitMessage(0);
         return 0;
@@ -149,7 +157,6 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 int UIMain_Init(AppContext *ctx) {
     if (!ctx) return 0;
-    g_mainCtx = ctx;
 
     WNDCLASSW wcMain;
     memset(&wcMain, 0, sizeof(wcMain));
@@ -170,14 +177,15 @@ int UIMain_Init(AppContext *ctx) {
         DPI_Scale(290, dpi),
         DPI_Scale(310, dpi),
         NULL, NULL,
-        ctx->hInstance, NULL
+        ctx->hInstance,
+        (LPVOID)ctx
     );
 
     if (!ctx->hwndMain) return 0;
 
     int y = DPI_Scale(12, dpi);
     for (int i = 0; i < MAX_MODES; i++) {
-        g_btnMain[i] = CreateWindowW(
+        CreateWindowW(
             L"BUTTON", L"",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             DPI_Scale(20, dpi), y,
@@ -212,8 +220,10 @@ int UIMain_Init(AppContext *ctx) {
     UIMain_RefreshButtons(ctx);
     UIMain_ApplyTraySetting(ctx);
     Hotkey_RegisterAll(ctx);
-    SetTimer(ctx->hwndMain, TIMER_POLL_ID, POLL_INTERVAL_MS, NULL);
-    ProcessMonitor_CheckAndTrigger(ctx);
+
+    /* 启动后台进程监控工作线程，彻底解放 UI 线程 */
+    ProcessMonitor_Start(ctx);
+    ProcessMonitor_TriggerOnce(ctx);
 
     return 1;
 }
@@ -234,6 +244,7 @@ int UIMain_RunLoop(AppContext *ctx, int initialShow) {
 
 void UIMain_Cleanup(AppContext *ctx) {
     if (!ctx) return;
+    ProcessMonitor_Stop(ctx);
     Hotkey_UnregisterAll(ctx);
     RemoveTrayIcon(ctx);
     if (ctx->hFont) {

@@ -3,7 +3,7 @@
 
 #include <windows.h>
 
-#define APP_VERSION L"1.0"
+#define APP_VERSION L"1.1"
 #define MAX_MODES 4
 #define MAX_CONFIG_PATH 260
 #define MAX_HOTKEY_LEN 32
@@ -13,7 +13,6 @@
 #define MAX_RUNNING_PROCS 1024
 #define DEFAULT_MODE_INDEX 1
 #define POLL_INTERVAL_MS 2000
-#define TIMER_POLL_ID 1
 
 #define FANCONTROL_EXE_DEFAULT L"C:\\Program Files (x86)\\FanControl\\FanControl.exe"
 #define MUTEX_NAME L"FanControl_Hotkey_Mutex_3F7A2E"
@@ -55,6 +54,7 @@
 /* 自定义窗口消息 */
 #define WM_TRAYICON (WM_APP + 1)
 #define WM_REFRESH_BROWSE (WM_APP + 2)
+#define WM_AUTO_SWITCH_MODE (WM_APP + 3)
 
 /* 托盘菜单命令（201-299） */
 #define IDM_TRAY_SHOW 201
@@ -91,6 +91,8 @@ typedef struct {
     int lastAutoMode;
     int trayAdded;
     HANDLE hMutex;
+    HANDLE hMonitorThread;
+    HANDLE hMonitorStopEvent;
 } AppContext;
 
 #endif

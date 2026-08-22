@@ -1,15 +1,71 @@
 #include <windows.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <string.h>
 #include "config.h"
 #include "strings.h"
 
+static int IsDirectoryWritable(const wchar_t *dirPath) {
+    if (!dirPath || !dirPath[0]) return 0;
+    wchar_t testFile[MAX_PATH];
+    _snwprintf(testFile, MAX_PATH, L"%s\\_fc_perm_test.tmp", dirPath);
+    HANDLE hFile = CreateFileW(testFile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(hFile);
+        DeleteFileW(testFile);
+        return 1;
+    }
+    return 0;
+}
+
 void Config_GetIniPath(wchar_t *outPath, int maxLen) {
     if (!outPath || maxLen <= 0) return;
-    GetModuleFileNameW(NULL, outPath, maxLen);
-    wchar_t *dot = wcsrchr(outPath, L'.');
+
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+
+    /* 1. 尝试便携式同级目录 INI */
+    wchar_t localIni[MAX_PATH];
+    wcsncpy(localIni, exePath, MAX_PATH - 1);
+    localIni[MAX_PATH - 1] = 0;
+    wchar_t *dot = wcsrchr(localIni, L'.');
     if (dot) wcscpy(dot, L".ini");
-    else wcsncat(outPath, L".ini", maxLen - wcslen(outPath) - 1);
+    else wcsncat(localIni, L".ini", MAX_PATH - wcslen(localIni) - 1);
+
+    /* 获取 exe 所在目录 */
+    wchar_t exeDir[MAX_PATH];
+    wcsncpy(exeDir, exePath, MAX_PATH - 1);
+    exeDir[MAX_PATH - 1] = 0;
+    wchar_t *slash = wcsrchr(exeDir, L'\\');
+    if (slash) *slash = 0;
+
+    /* 如果同级 INI 存在，直接优先使用 */
+    if (GetFileAttributesW(localIni) != INVALID_FILE_ATTRIBUTES) {
+        wcsncpy(outPath, localIni, maxLen - 1);
+        outPath[maxLen - 1] = 0;
+        return;
+    }
+
+    /* 如果同级目录可写（如便携运行于用户目录），使用同级 INI */
+    if (IsDirectoryWritable(exeDir)) {
+        wcsncpy(outPath, localIni, maxLen - 1);
+        outPath[maxLen - 1] = 0;
+        return;
+    }
+
+    /* 2. 否则安全回退至 %APPDATA%\FanControlHotkey\config.ini */
+    wchar_t appData[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appData))) {
+        wchar_t appDir[MAX_PATH];
+        _snwprintf(appDir, MAX_PATH, L"%s\\FanControlHotkey", appData);
+        CreateDirectoryW(appDir, NULL);
+        _snwprintf(outPath, maxLen, L"%s\\config.ini", appDir);
+        return;
+    }
+
+    /* 兜底 */
+    wcsncpy(outPath, localIni, maxLen - 1);
+    outPath[maxLen - 1] = 0;
 }
 
 void Config_ParseProcessList(ModeConfig *mode, const wchar_t *text) {
@@ -220,14 +276,47 @@ int Config_IsAutostartEnabled(void) {
     if (RegOpenKeyExW(HKEY_CURRENT_USER, APP_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
         return 0;
 
-    wchar_t path[MAX_PATH * 2];
-    DWORD len = sizeof(path);
+    wchar_t regVal[MAX_PATH * 2 + 64];
+    DWORD len = sizeof(regVal);
     DWORD type;
-    int found = 0;
-    if (RegQueryValueExW(hKey, APP_REG_VAL, NULL, &type, (LPBYTE)path, &len) == ERROR_SUCCESS)
-        found = 1;
+    int valid = 0;
+    if (RegQueryValueExW(hKey, APP_REG_VAL, NULL, &type, (LPBYTE)regVal, &len) == ERROR_SUCCESS && type == REG_SZ) {
+        wchar_t currentExe[MAX_PATH];
+        GetModuleFileNameW(NULL, currentExe, MAX_PATH);
+
+        wchar_t regExe[MAX_PATH];
+        regExe[0] = 0;
+        const wchar_t *p = regVal;
+        if (*p == L'"') {
+            p++;
+            const wchar_t *endQuote = wcschr(p, L'"');
+            if (endQuote) {
+                int exeLen = (int)(endQuote - p);
+                if (exeLen < MAX_PATH) {
+                    wcsncpy(regExe, p, exeLen);
+                    regExe[exeLen] = 0;
+                }
+            }
+        } else {
+            const wchar_t *space = wcschr(p, L' ');
+            if (space) {
+                int exeLen = (int)(space - p);
+                if (exeLen < MAX_PATH) {
+                    wcsncpy(regExe, p, exeLen);
+                    regExe[exeLen] = 0;
+                }
+            } else {
+                wcsncpy(regExe, p, MAX_PATH - 1);
+                regExe[MAX_PATH - 1] = 0;
+            }
+        }
+
+        if (regExe[0] && _wcsicmp(regExe, currentExe) == 0) {
+            valid = 1;
+        }
+    }
     RegCloseKey(hKey);
-    return found;
+    return valid;
 }
 
 void Config_SetAutostart(int on) {

@@ -5,8 +5,8 @@ IDI_MAIN ICON "icon.ico"
 IDR_MANIFEST RT_MANIFEST "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,1,0,0
+PRODUCTVERSION  1,1,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS       VS_FF_DEBUG
@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "FanControl-Hotkey Project"
             VALUE "FileDescription",  "FanControl Hotkey & Process Auto Switcher"
-            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "FileVersion",      "1.1.0.0"
             VALUE "InternalName",     "FanControlHotkey"
             VALUE "LegalCopyright",   "MIT License"
             VALUE "OriginalFilename", "FanControlHotkey.exe"
             VALUE "ProductName",      "FanControl Hotkey"
-            VALUE "ProductVersion",   "1.0.0.0"
+            VALUE "ProductVersion",   "1.1.0.0"
         END
     END
     BLOCK "VarFileInfo"
