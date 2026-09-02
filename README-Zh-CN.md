@@ -1,4 +1,4 @@
-# FanControl Hotkey (v1.1)
+# FanControl Hotkey
 
 [English](README.md) | **简体中文**
 
@@ -8,18 +8,18 @@
 
 ## ✨ 核心特性
 
-- **4 种风扇模式预设**：静音 / 日常 / 野兽 / 涡轮
-- **自定义快捷键绑定**：支持任意组合键捕获与绑定（如 `Ctrl+Alt+1`、`Shift+Win+F12`）
-- **异步后台进程感知自动切换**：专属后台工作线程与 $O(1)$ FNV-1a 哈希匹配（如启动 `Cyberpunk2077.exe` 自动切为野兽/涡轮，退出时自动回退为日常）
-- **可视化图形设置窗口**：图形化浏览 FanControl 路径、模式配置文件、快捷键捕获与关联进程管理
-- **事务级草稿隔离机制 (Draft Isolation)**：设置窗口采用内存临时草稿，点击“取消”零副作用，点击“确定”原子提交应用
-- **安全加固与健壮持久化**：
+- 4 种风扇模式预设：静音 / 日常 / 野兽 / 涡轮
+- 自定义快捷键绑定：支持任意组合键捕获与绑定（如 `Ctrl+Alt+1`、`Shift+Win+F12`）
+- 异步后台进程感知自动切换：专属后台工作线程与 O(1) FNV-1a 哈希匹配（如启动 `Cyberpunk2077.exe` 自动切为野兽/涡轮，退出时自动回退为日常）
+- 可视化图形设置窗口：图形化浏览 FanControl 路径、模式配置文件、快捷键捕获与关联进程管理
+- 事务级草稿隔离机制 (Draft Isolation)：设置窗口采用内存临时草稿，点击“取消”零副作用，点击“确定”原子提交应用
+- 安全加固与健壮持久化：
   - 开机自启注册表写入严格双引号包裹路径 (`\"%s\" %s`)，并校验运行路径一致性
   - 多级配置存储策略：优先可执行文件同级便携式 `.ini`，受保护目录自动回退至 `%APPDATA%\FanControlHotkey\`
   - 外部进程通过 `CreateProcessW` 安全拉起，配合参数转义与文件存在性校验
-- **原生宽字符与 Per-Monitor V2 高分屏**：全链路采用 `wchar_t` (UTF-16)，清单声明 DPI-Aware 并动态缩放 GDI 字体
-- **系统托盘与单实例防护**：常驻系统托盘，重复启动自动唤醒并激活已有实例窗口
-- **零外部依赖**：仅链接 Windows 原生系统动态库（`USER32`、`SHELL32`、`COMDLG32`、`ADVAPI32`、`GDI32`）
+- 原生宽字符与 Per-Monitor V2 高分屏：全链路采用 `wchar_t` (UTF-16)，清单声明 DPI-Aware 并动态缩放 GDI 字体
+- 系统托盘与单实例防护：常驻系统托盘，重复启动自动唤醒并激活已有实例窗口
+- 零外部依赖：仅链接 Windows 原生系统动态库（`USER32`、`SHELL32`、`COMDLG32`、`ADVAPI32`、`GDI32`）
 
 ---
 
@@ -80,9 +80,9 @@ make clean
 │   ├── app.manifest           # Per-Monitor V2 DPI 清单与系统兼容性声明
 │   ├── resource.h / .rc       # 应用图标与 VERSIONINFO 资源
 │   └── icon.ico               # 应用程序图标
-├── specs/                     # 架构规范、决策记录与代码审查归档
+├── specs/                     # 本地归档：架构规范、决策记录与代码审查（不入库）
 ├── build.ps1                  # Windows PowerShell 构建脚本
-├── Makefile                   # 跨平台 Makefile
+├── Makefile                   # Windows Makefile（MinGW-w64 工具链）
 └── README.md                  # 英文说明文档
 ```
 

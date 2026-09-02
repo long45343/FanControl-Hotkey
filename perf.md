@@ -3,6 +3,8 @@
 > 采集时间 Collected: 2026-08-28 21:07 · 应用自启动于 Started: 2026-08-23 11:52:49
 > 进程 Process: `FanControlHotkey.exe` (PID 17740) · `D:\EDCs\Tools\FancontrolHotkey\FanControlHotkey.exe`
 > 主机 Host: AMD Ryzen 5 9600X (12 逻辑处理器 logical processors) · 31.7 GB RAM (空闲 free: 12.3 GB) · Windows 10.0.26100
+> 本文件为对外权威版本，specs 目录下的性能报告仅作当日快照归档，不再演进。
+> This file is the authoritative version; the performance report under specs/ is an archival snapshot only and will not be updated.
 
 ## 核心指标 | Key Metrics
 
@@ -25,17 +27,9 @@
 
 ## CPU 归因 | CPU Attribution
 
-**中文**：累计 952.06 s CPU 中，951.77 s 集中在监控线程（TID 17760），主 GUI 线程（TID 17744）仅 0.27 s：
+**中文**：累计 952.06 s CPU 中，951.77 s 集中在监控线程（TID 17760），主 GUI 线程（TID 17744）仅占 0.27 s。监控线程按 `src/app_context.h:15` 的 `POLL_INTERVAL_MS 2000` 每 2 秒经 `WaitForSingleObject` 超时唤醒（`src/process_monitor.c:119`），随后执行一次进程快照枚举与目标模式评估，每周期约消耗 4 ms CPU，属于"等待-唤醒"模型而非忙轮询，设计正确。主 GUI 线程 5 天累计仅 0.27 s，热键消息循环几乎全空闲，因此热键按下可即时响应。两个线程均处于 Wait/UserRequest 状态、优先级 Normal，符合预期。
 
-- 监控线程按 `src/app_context.h:15` 的 `POLL_INTERVAL_MS 2000` 每 2 秒经 `WaitForSingleObject` 超时唤醒（`src/process_monitor.c:119`），执行一次进程快照枚举与目标模式评估，每周期约 4 ms CPU。属"等待-唤醒"模型而非忙轮询，设计正确。
-- 主 GUI 线程 5 天累计仅 0.27 s，说明热键消息循环几乎全空闲，热键按下可即时响应。
-- 两个线程均处于 Wait/UserRequest 状态，优先级 Normal，符合预期。
-
-**English**: Of the cumulative 952.06 s of CPU time, 951.77 s was spent in the monitor thread (TID 17760), while the main GUI thread (TID 17744) used only 0.27 s:
-
-- The monitor thread wakes every 2 seconds via `WaitForSingleObject` timeout (`src/process_monitor.c:119`) as configured by `POLL_INTERVAL_MS 2000` in `src/app_context.h:15`, then performs one process-snapshot enumeration and target-mode evaluation — roughly 4 ms of CPU per cycle. This is a proper "wait-and-wake" model rather than busy polling.
-- With only 0.27 s accumulated over 5 days, the GUI thread's hotkey message loop is essentially idle, so hotkey presses are answered instantly.
-- Both threads sit in the Wait/UserRequest state at Normal priority, exactly as expected.
+**English**: Of the cumulative 952.06 s of CPU time, 951.77 s was spent in the monitor thread (TID 17760), while the main GUI thread (TID 17744) used only 0.27 s. The monitor thread wakes every 2 seconds via `WaitForSingleObject` timeout (`src/process_monitor.c:119`) as configured by `POLL_INTERVAL_MS 2000` in `src/app_context.h:15`, then performs one process-snapshot enumeration and target-mode evaluation — roughly 4 ms of CPU per cycle, which is a proper "wait-and-wake" model rather than busy polling. With only 0.27 s accumulated over 5 days, the GUI thread's hotkey message loop is essentially idle, so hotkey presses are answered instantly. Both threads sit in the Wait/UserRequest state at Normal priority, exactly as expected.
 
 ## 结论 | Conclusion
 
